@@ -2,6 +2,42 @@ name: Generate XML Feed
 
 on:
   schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Save credentials
+        run: |
+          printf '%s' '${{ secrets.GOOGLE_CREDS }}' > credentials.json
+
+      - name: Run script
+        run: python generate_xml.py
+
+      - name: Commit XML
+        run: |
+          git config --global user.name "bot"
+          git config --global user.email "bot@example.com"
+          git add feed.xml
+          git commit -m "Update XML" || echo "No changes"
+          git pushname: Generate XML Feed
+
+on:
+  schedule:
     - cron: "*/30 * * * *"   # every 30 minutes
   workflow_dispatch:
 
