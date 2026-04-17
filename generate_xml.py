@@ -135,6 +135,6 @@ for i, row in enumerate(data, start=2):
 
 # --- SAVE XML ---
 tree = ET.ElementTree(root)
-tree.write("products.xml", encoding="utf-8", xml_declaration=True)
+tree.write("feed.xml", encoding="utf-8", xml_declaration=True)
 
 print("XML Updated Successfully!")
