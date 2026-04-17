@@ -17,10 +17,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo (full history)
+      - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0   # IMPORTANT: required for git pull/rebase
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -40,18 +38,15 @@ jobs:
       - name: Run script
         run: python generate_xml.py
 
-      - name: Commit and Push XML (safe)
+      - name: Commit and Push XML (force-safe)
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add feed.xml
 
-          # Commit only if changes exist
+          # Commit only if there are changes
           git diff --cached --quiet || git commit -m "Update XML"
 
-          # Rebase with latest remote changes
-          git pull --rebase origin main
-
-          # Push safely
-          git push origin main
+          # Force-safe push (prevents fetch/rebase errors)
+          git push origin HEAD:main --force-with-lease
