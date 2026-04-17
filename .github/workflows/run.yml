@@ -36,8 +36,9 @@ jobs:
 
       - name: Commit XML
         run: |
-          git config --global user.name "bot"
-          git config --global user.email "bot@example.com"
-          git add feed.xml
-          git commit -m "Update XML" || echo "No changes"
-          git push
+         git config --global user.name "bot"
+         git config --global user.email "bot@example.com"
+         git add feed.xml
+         git commit -m "Update XML" || echo "No changes"
+         git pull --rebase
+         git push
