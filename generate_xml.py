@@ -18,7 +18,6 @@ scope = [
 ]
 
 creds_raw = os.environ.get("GOOGLE_CREDENTIALS")
-
 if not creds_raw:
     raise Exception("GOOGLE_CREDENTIALS is missing")
 
@@ -38,7 +37,7 @@ headers = {
     "Accept-Language": "en-GB,en;q=0.9"
 }
 
-# --- ASIN EXTRACT (FINAL UNIVERSAL) ---
+# --- ASIN EXTRACT (UNIVERSAL) ---
 def extract_asin(url):
     match = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Za-z0-9]{10})", url)
     if match:
@@ -79,7 +78,6 @@ def get_amazon_data(url):
             print("❌ Empty product:", asin)
             return None, None
 
-        # --- PRICE ---
         price = None
         buybox = product.get("buybox_winner")
 
@@ -88,7 +86,6 @@ def get_amazon_data(url):
         elif product.get("price"):
             price = product["price"].get("value")
 
-        # --- STOCK ---
         availability = product.get("availability", "").lower()
 
         if "in stock" in availability:
@@ -107,7 +104,7 @@ def get_amazon_data(url):
         return None, None
 
 
-# --- EBAY (FINAL ROBUST) ---
+# --- EBAY (MAXIMUM ROBUST) ---
 def get_ebay_data(url):
     try:
         from bs4 import BeautifulSoup
@@ -117,29 +114,36 @@ def get_ebay_data(url):
 
         price = None
 
-        # --- STEP 1: Try selectors ---
-        selectors = [
-            ".x-price-primary span",
-            ".ux-textspans--BOLD",
-            ".ux-textspans",
-            "#prcIsum",
-            "#mm-saleDscPrc"
-        ]
+        # --- METHOD 1: JSON SCRIPT PARSING (BEST) ---
+        scripts = soup.find_all("script")
+        for script in scripts:
+            if script.string and "price" in script.string:
+                matches = re.findall(r'"price":"?([0-9]+\.[0-9]+)"?', script.string)
+                if matches:
+                    price = float(matches[0])
+                    break
 
-        for sel in selectors:
-            tags = soup.select(sel)
-            for tag in tags:
-                text = tag.text.strip()
-                if "£" in text:
-                    try:
-                        price = float(text.replace("£", "").replace(",", ""))
-                        break
-                    except:
-                        continue
-            if price:
-                break
+        # --- METHOD 2: SELECTORS ---
+        if price is None:
+            selectors = [
+                ".x-price-primary span",
+                ".ux-textspans--BOLD",
+                "#prcIsum",
+                "#mm-saleDscPrc"
+            ]
 
-        # --- STEP 2: REGEX FALLBACK ---
+            for sel in selectors:
+                tag = soup.select_one(sel)
+                if tag:
+                    text = tag.text.strip()
+                    if "£" in text:
+                        try:
+                            price = float(text.replace("£", "").replace(",", ""))
+                            break
+                        except:
+                            pass
+
+        # --- METHOD 3: REGEX FALLBACK ---
         if price is None:
             matches = re.findall(r"£\s?([0-9]+(?:\.[0-9]{1,2})?)", soup.text)
             if matches:
@@ -148,7 +152,6 @@ def get_ebay_data(url):
                 except:
                     pass
 
-        # --- STOCK ---
         stock = 1
         if "out of stock" in soup.text.lower():
             stock = 0
@@ -172,14 +175,13 @@ for i, row in enumerate(data, start=2):
 
     stock, price = None, None
 
-    # --- PLATFORM DETECTION ---
+    # --- DETECT PLATFORM ---
     if "amazon." in url:
         stock, price = get_amazon_data(url)
 
     elif "ebay." in url:
         stock, price = get_ebay_data(url)
 
-    # --- DEBUG ---
     print(f"URL: {url}")
     print(f"Result → Stock: {stock}, Price: {price}")
 
@@ -190,7 +192,6 @@ for i, row in enumerate(data, start=2):
     if stock is None:
         stock = row.get("Stock", 0)
 
-    # --- CALCULATE ---
     cost_price = round(price, 2)
     selling_price = round(price * 1.35, 2)
 
