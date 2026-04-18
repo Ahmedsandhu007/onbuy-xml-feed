@@ -28,29 +28,51 @@ headers = {
     "User-Agent": "Mozilla/5.0"
 }
 
-# ================= ONBUY UPDATE (FIXED) =================
+# ================= ONBUY UPDATE (FINAL FIX) =================
 def update_onbuy_product(sku, price, quantity):
     try:
-        url = "https://api.onbuy.com/gb/v2/products/update"
+        base_url = "https://api.onbuy.com/gb/v2"
 
         headers = {
             "Authorization": f"Basic {ONBUY_BASE64}",
             "Content-Type": "application/json"
         }
 
-        payload = {
+        # 🔹 PRICE UPDATE
+        price_payload = {
             "products": [
                 {
                     "sku": str(sku),
-                    "price": float(price),
+                    "price": float(price)
+                }
+            ]
+        }
+
+        res_price = requests.post(
+            f"{base_url}/products/update-price",
+            json=price_payload,
+            headers=headers
+        )
+
+        print(f"PRICE → {sku} → {res_price.status_code} → {res_price.text}")
+
+        # 🔹 STOCK UPDATE
+        stock_payload = {
+            "products": [
+                {
+                    "sku": str(sku),
                     "quantity": int(quantity)
                 }
             ]
         }
 
-        res = requests.post(url, json=payload, headers=headers)
+        res_stock = requests.post(
+            f"{base_url}/products/update-stock",
+            json=stock_payload,
+            headers=headers
+        )
 
-        print(f"OnBuy → {sku} → {res.status_code} → {res.text}")
+        print(f"STOCK → {sku} → {res_stock.status_code} → {res_stock.text}")
 
     except Exception as e:
         print("OnBuy error:", e)
@@ -175,7 +197,7 @@ for i, row in enumerate(data[:1], start=2):  # TEST 1 PRODUCT
         datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     ]])
 
-    # 🚀 ONBUY UPDATE (FIXED)
+    # 🚀 ONBUY UPDATE
     update_onbuy_product(
         sku=row.get("SKU"),
         price=selling_price,
