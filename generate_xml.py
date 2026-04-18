@@ -29,10 +29,6 @@ client = gspread.authorize(creds)
 sheet = client.open("OnBuy_Feed_Master").sheet1
 data = sheet.get_all_records()
 
-headers = {
-    "User-Agent": "Mozilla/5.0"
-}
-
 # ================= AMAZON =================
 def extract_asin(url):
     match = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Za-z0-9]{10})", url)
@@ -52,7 +48,7 @@ def get_amazon_data(url):
             "asin": asin
         }
 
-        res = requests.get("https://api.rainforestapi.com/request", params=params)
+        res = requests.get("https://api.rainforestapi.com/request", params=params, timeout=20)
         data = res.json().get("product", {})
 
         price = None
@@ -78,57 +74,48 @@ def get_amazon_data(url):
         return None, None
 
 
-# ================= EBAY (IMPROVED) =================
+# ================= EBAY (FIXED PROPERLY) =================
+def extract_ebay_id(url):
+    match = re.search(r"/itm/(\d+)", url)
+    return match.group(1) if match else None
+
+
 def get_ebay_data(url):
     try:
-        from bs4 import BeautifulSoup
+        item_id = extract_ebay_id(url)
 
-        res = requests.get(url, headers=headers, timeout=30)
-        soup = BeautifulSoup(res.text, "html.parser")
+        if not item_id:
+            print("eBay → Invalid URL")
+            return None, None
+
+        params = {
+            "api_key": API_KEY,
+            "type": "product",
+            "ebay_domain": "ebay.co.uk",
+            "item_id": item_id
+        }
+
+        res = requests.get("https://api.rainforestapi.com/request", params=params, timeout=20)
+        data = res.json().get("product", {})
 
         price = None
+        if data.get("price"):
+            price = data["price"].get("value")
 
-        # 🔹 Try multiple selectors
-        selectors = [
-            ".x-price-primary span",
-            ".ux-textspans--BOLD",
-            ".notranslate",
-            "#prcIsum",
-            "#mm-saleDscPrc"
-        ]
+        availability = str(data.get("availability", "")).lower()
 
-        for sel in selectors:
-            tag = soup.select_one(sel)
-            if tag:
-                text = tag.text.strip().replace("£", "").replace(",", "")
-                match = re.findall(r"\d+\.?\d*", text)
-                if match:
-                    price = float(match[0])
-                    break
-
-        # 🔹 Fallback: regex search entire page
-        if price is None:
-            text = soup.text
-            matches = re.findall(r"£\s?([0-9]+(?:\.[0-9]{1,2})?)", text)
-            if matches:
-                price = float(matches[0])
-
-        # 🔹 STOCK
-        text_lower = soup.text.lower()
-        stock = None
-
-        qty_match = re.search(r"(\d+)\s+available", text_lower)
-        if qty_match:
-            stock = int(qty_match.group(1))
-
-        if stock is None:
+        if "in stock" in availability:
+            stock = 5
+        elif "out of stock" in availability:
+            stock = 0
+        else:
             stock = 1
 
-        print(f"eBay → Stock: {stock}, Price: {price}")
+        print(f"eBay(API) → Stock: {stock}, Price: {price}")
         return stock, price
 
     except Exception as e:
-        print("eBay error:", e)
+        print("eBay API error:", e)
         return None, None
 
 
@@ -150,18 +137,18 @@ for i, row in enumerate(data, start=2):
 
     print(f"Result → Stock: {stock}, Price: {price}")
 
-    # 🔹 Fallbacks (VERY IMPORTANT)
+    # ✅ FALLBACKS
     if price is None:
         price = row.get("Cost Price (£)", 0)
 
     if stock is None:
         stock = row.get("Stock", 0)
 
-    # 🎯 PRICING
+    # 🎯 PRICING LOGIC (CORRECT)
     profit = random.uniform(MIN_PROFIT, MAX_PROFIT)
 
     if (FEE + profit) >= 1:
-        profit = 0.21
+        profit = MIN_PROFIT
 
     selling_price = round(price / (1 - FEE - profit), 2)
 
