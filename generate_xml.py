@@ -136,16 +136,26 @@ root = ET.Element("products")
 # --- MAIN LOOP ---
 for i, row in enumerate(data, start=2):
 
-    supplier = row.get("Supplier")
+    # --- SAFE SUPPLIER DETECTION ---
+    raw_supplier = str(row.get("Supplier") or row.get("Source") or "")
+    supplier = raw_supplier.strip().lower()
+
     url = row.get("Supplier URL")
 
     stock, price = None, None
 
+    # --- DEBUG ---
+    print(f"Supplier raw: {raw_supplier} → normalized: {supplier}")
+
     # --- FETCH ---
-    if supplier == "Amazon":
+    if "amazon" in supplier:
         stock, price = get_amazon_data(url)
-    elif supplier == "eBay":
+
+    elif "ebay" in supplier:
         stock, price = get_ebay_data(url)
+
+    # --- DEBUG RESULT ---
+    print(f"Result → Stock: {stock}, Price: {price}")
 
     # --- FALLBACK ---
     if price is None:
@@ -191,7 +201,6 @@ for i, row in enumerate(data, start=2):
 
     print(f"Processed row {i}")
     time.sleep(2)
-
 # --- SAVE XML ---
 tree = ET.ElementTree(root)
 tree.write("feed.xml", encoding="utf-8", xml_declaration=True)
