@@ -1,7 +1,6 @@
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import requests
-import xml.etree.ElementTree as ET
 from datetime import datetime
 import time
 import json
@@ -10,6 +9,7 @@ import re
 
 # ================= CONFIG =================
 API_KEY = os.getenv("RAINFOREST_API_KEY")
+ONBUY_BASE64 = os.getenv("ONBUY_BASE64")
 
 # ================= AUTH =================
 scope = [
@@ -18,7 +18,6 @@ scope = [
 ]
 
 creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
-
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 client = gspread.authorize(creds)
 
@@ -26,9 +25,60 @@ sheet = client.open("OnBuy_Feed_Master").sheet1
 data = sheet.get_all_records()
 
 headers = {
-    "User-Agent": "Mozilla/5.0",
-    "Accept-Language": "en-GB,en;q=0.9"
+    "User-Agent": "Mozilla/5.0"
 }
+
+# ================= ONBUY TOKEN =================
+def get_onbuy_token():
+    try:
+        url = "https://api.onbuy.com/gb/v2/oauth/token"
+
+        headers = {
+            "Authorization": f"Basic {ONBUY_BASE64}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        data = {"grant_type": "client_credentials"}
+
+        res = requests.post(url, headers=headers, data=data)
+        token = res.json().get("access_token")
+
+        print("OnBuy Token:", "OK" if token else "FAILED")
+
+        return token
+
+    except Exception as e:
+        print("OnBuy token error:", e)
+        return None
+
+
+# ================= ONBUY UPDATE =================
+def update_onbuy_product(sku, price, quantity, token):
+    try:
+        url = "https://api.onbuy.com/gb/v2/products/update"
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "products": [
+                {
+                    "sku": str(sku),
+                    "price": float(price),
+                    "quantity": int(quantity)
+                }
+            ]
+        }
+
+        res = requests.post(url, json=payload, headers=headers)
+
+        print(f"OnBuy → {sku} → {res.status_code} → {res.text}")
+
+    except Exception as e:
+        print("OnBuy update error:", e)
+
 
 # ================= AMAZON =================
 def extract_asin(url):
@@ -49,7 +99,7 @@ def get_amazon_data(url):
             "asin": asin
         }
 
-        res = requests.get("https://api.rainforestapi.com/request", params=params, timeout=20)
+        res = requests.get("https://api.rainforestapi.com/request", params=params)
         data = res.json().get("product", {})
 
         price = None
@@ -67,8 +117,7 @@ def get_amazon_data(url):
         else:
             stock = 5
 
-        print(f"Amazon API | {asin} | Stock: {stock} | Price: {price}")
-
+        print(f"Amazon → Stock: {stock}, Price: {price}")
         return stock, price
 
     except Exception as e:
@@ -83,70 +132,32 @@ def get_ebay_data(url):
 
         res = requests.get(url, headers=headers, timeout=15)
         soup = BeautifulSoup(res.text, "html.parser")
-
         text = soup.text.lower()
 
-        # ---------- PRICE ----------
         price = None
 
-        # JSON extraction
         for script in soup.find_all("script"):
             if script.string and "price" in script.string:
-                matches = re.findall(r'"price":"?([0-9]+\.[0-9]+)"?', script.string)
-                if matches:
-                    price = float(matches[0])
+                m = re.findall(r'"price":"?([0-9]+\.[0-9]+)"?', script.string)
+                if m:
+                    price = float(m[0])
                     break
 
-        # Selectors
         if price is None:
-            selectors = [".x-price-primary span", "#prcIsum"]
-            for sel in selectors:
-                tag = soup.select_one(sel)
-                if tag:
-                    txt = tag.text.replace("£", "").replace(",", "").strip()
-                    if txt.replace(".", "").isdigit():
-                        price = float(txt)
-                        break
-
-        # Regex fallback
-        if price is None:
-            matches = re.findall(r"£\s?([0-9]+(?:\.[0-9]{1,2})?)", soup.text)
+            matches = re.findall(r"£\s?([0-9]+(?:\.[0-9]{1,2})?)", text)
             if matches:
                 price = float(matches[0])
 
-        # ---------- STOCK (FIXED) ----------
         stock = None
 
-        # 1. Quantity detection (MOST IMPORTANT)
         qty_match = re.search(r"(\d+)\s+available", text)
         if qty_match:
-            try:
-                stock = int(qty_match.group(1))
-            except:
-                stock = 1
+            stock = int(qty_match.group(1))
 
-        # 2. Limited stock phrases
-        if stock is None:
-            if "last one" in text:
-                stock = 1
-            elif "limited quantity" in text:
-                stock = 2
-
-        # 3. Out-of-stock / ended listing
-        if any(x in text for x in [
-            "out of stock",
-            "this listing was ended",
-            "sold out",
-            "no longer available"
-        ]):
-            stock = 0
-
-        # 4. Final fallback
         if stock is None:
             stock = 1
 
-        print(f"eBay parsed → Stock: {stock}, Price: {price}")
-
+        print(f"eBay → Stock: {stock}, Price: {price}")
         return stock, price
 
     except Exception as e:
@@ -154,13 +165,12 @@ def get_ebay_data(url):
         return None, None
 
 
-# ================= XML =================
-root = ET.Element("products")
+# ================= MAIN =================
+onbuy_token = get_onbuy_token()
 
-# ================= MAIN LOOP =================
-for i, row in enumerate(data, start=2):
+for i, row in enumerate(data[:1], start=2):  # TEST WITH 1 PRODUCT
 
-    url = str(row.get("Supplier URL", "")).strip().lower()
+    url = str(row.get("Supplier URL", "")).lower()
 
     stock, price = None, None
 
@@ -170,55 +180,38 @@ for i, row in enumerate(data, start=2):
     elif "ebay." in url:
         stock, price = get_ebay_data(url)
 
-    print(f"URL: {url}")
     print(f"Result → Stock: {stock}, Price: {price}")
 
-    # Fallback
     if price is None:
         price = row.get("Cost Price (£)", 0)
 
     if stock is None:
         stock = row.get("Stock", 0)
 
-    cost_price = round(price, 2)
     selling_price = round(price * 1.35, 2)
 
     status = "ACTIVE" if stock > 0 else "INACTIVE"
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Sheet update
-    try:
-        sheet.update(range_name=f"H{i}:O{i}", values=[[
-            cost_price,
-            "", "", "",
-            stock,
-            selling_price,
-            status,
-            timestamp
-        ]])
-    except Exception as e:
-        print("Sheet error:", e)
+    # Update Sheet
+    sheet.update(range_name=f"H{i}:O{i}", values=[[
+        price,
+        "", "", "",
+        stock,
+        selling_price,
+        status,
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ]])
 
-    # XML
-    if status == "ACTIVE":
-        product = ET.SubElement(root, "product")
-
-        ET.SubElement(product, "sku").text = str(row.get("SKU", ""))
-        ET.SubElement(product, "title").text = row.get("Title", "")
-        ET.SubElement(product, "description").text = row.get("Description", "")
-        ET.SubElement(product, "price").text = str(selling_price)
-        ET.SubElement(product, "quantity").text = str(stock)
-        ET.SubElement(product, "brand").text = row.get("Brand", "")
-        ET.SubElement(product, "image_url").text = row.get("Image URL", "")
-        ET.SubElement(product, "additional_images").text = row.get("Additional Images", "")
-        ET.SubElement(product, "category").text = row.get("Category", "")
-        ET.SubElement(product, "condition").text = row.get("Condition", "")
+    # 🚀 ONBUY UPDATE
+    if onbuy_token:
+        update_onbuy_product(
+            sku=row.get("SKU"),
+            price=selling_price,
+            quantity=stock,
+            token=onbuy_token
+        )
 
     print(f"Processed row {i}")
-    time.sleep(2)
+    time.sleep(1)
 
-# SAVE XML
-tree = ET.ElementTree(root)
-tree.write("feed.xml", encoding="utf-8", xml_declaration=True)
-
-print("XML Updated Successfully!")
+print("DONE")
