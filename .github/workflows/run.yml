@@ -1,20 +1,9 @@
-name: Generate XML Feed
-
-permissions:
-  contents: write
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-env:
-  RAINFOREST_API_KEY: ${{ secrets.RAINFOREST_API_KEY }}
+name: Generate OnBuy Feed
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/30 * * * *"   # every 30 minutes
   workflow_dispatch:
-
-concurrency:
-  group: xml-feed
-  cancel-in-progress: true
 
 jobs:
   build:
@@ -22,35 +11,26 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Save credentials
-        run: |
-          printf '%s' '${{ secrets.GOOGLE_CREDS }}' > credentials.json
-
-      - name: Set credentials env
-        run: echo "GOOGLE_APPLICATION_CREDENTIALS=credentials.json" >> $GITHUB_ENV
-
       - name: Run script
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          RAINFOREST_API_KEY: ${{ secrets.RAINFOREST_API_KEY }}
         run: python generate_xml.py
 
-      - name: Commit and Push XML (force-safe)
+      - name: Commit and push XML
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
           git add feed.xml
-
-          # Commit only if there are changes
-          git diff --cached --quiet || git commit -m "Update XML"
-
-          # Force-safe push (prevents fetch/rebase errors)
-          git push origin HEAD:main --force-with-lease
+          git commit -m "Auto update feed" || echo "No changes"
+          git push
