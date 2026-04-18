@@ -30,25 +30,23 @@ headers = {
 
 # ================= ONBUY TOKEN =================
 def get_onbuy_token():
+    url = "https://api.onbuy.com/gb/v2/oauth/token"
+
+    headers = {
+        "Authorization": f"Basic {os.getenv('ONBUY_BASE64')}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+
+    data = {"grant_type": "client_credentials"}
+
+    res = requests.post(url, headers=headers, data=data)
+
+    print("STATUS:", res.status_code)
+    print("RESPONSE:", res.text)
+
     try:
-        url = "https://api.onbuy.com/gb/v2/oauth/token"
-
-        headers = {
-            "Authorization": f"Basic {ONBUY_BASE64}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-
-        data = {"grant_type": "client_credentials"}
-
-        res = requests.post(url, headers=headers, data=data)
-        token = res.json().get("access_token")
-
-        print("OnBuy Token:", "OK" if token else "FAILED")
-
-        return token
-
-    except Exception as e:
-        print("OnBuy token error:", e)
+        return res.json().get("access_token")
+    except:
         return None
 
 
