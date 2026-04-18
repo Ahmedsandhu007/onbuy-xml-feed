@@ -31,7 +31,6 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(
 
 client = gspread.authorize(creds)
 sheet = client.open("OnBuy_Feed_Master").sheet1
-
 data = sheet.get_all_records()
 
 headers = {
@@ -39,12 +38,9 @@ headers = {
     "Accept-Language": "en-GB,en;q=0.9"
 }
 
-# --- ASIN EXTRACT (FINAL FIX) ---
+# --- ASIN EXTRACT (FINAL UNIVERSAL) ---
 def extract_asin(url):
-    match = re.search(
-        r"/(?:dp|gp/product|gp/aw/d)/([A-Za-z0-9]{10})",
-        url
-    )
+    match = re.search(r"/(?:dp|gp/product|gp/aw/d)/([A-Za-z0-9]{10})", url)
     if match:
         return match.group(1).upper()
     return None
@@ -80,7 +76,7 @@ def get_amazon_data(url):
         product = data.get("product", {})
 
         if not product:
-            print("❌ Empty product data:", asin)
+            print("❌ Empty product:", asin)
             return None, None
 
         # --- PRICE ---
@@ -111,7 +107,7 @@ def get_amazon_data(url):
         return None, None
 
 
-# --- EBAY (IMPROVED) ---
+# --- EBAY (ROBUST) ---
 def get_ebay_data(url):
     try:
         from bs4 import BeautifulSoup
@@ -121,26 +117,33 @@ def get_ebay_data(url):
 
         price = None
 
-        # Try multiple selectors
         selectors = [
             ".x-price-primary span",
+            ".ux-textspans--BOLD",
             ".ux-textspans",
-            ".notranslate"
+            "#prcIsum",
+            "#mm-saleDscPrc"
         ]
 
         for sel in selectors:
-            tag = soup.select_one(sel)
-            if tag:
-                try:
-                    text = tag.text.replace("£", "").replace(",", "").strip()
-                    price = float(text)
-                    break
-                except:
-                    continue
+            tags = soup.select(sel)
+            for tag in tags:
+                text = tag.text.strip()
+                if "£" in text:
+                    try:
+                        cleaned = text.replace("£", "").replace(",", "")
+                        price = float(cleaned)
+                        break
+                    except:
+                        continue
+            if price:
+                break
 
         stock = 1
         if "out of stock" in soup.text.lower():
             stock = 0
+
+        print(f"eBay parsed → Stock: {stock}, Price: {price}")
 
         return stock, price
 
