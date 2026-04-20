@@ -155,23 +155,25 @@ for i, row in enumerate(data, start=2):
     price = price or row.get("Cost Price (£)", 0)
     stock = stock if stock is not None else row.get("Stock", 0)
 
-    # ===== PRICING (FIXED) =====
-    profit = random.uniform(MIN_PROFIT, MAX_PROFIT)
+    # ===== PRICING (MARKUP CORRECT) =====
+       profit = random.uniform(MIN_PROFIT, MAX_PROFIT)
 
-    total_markup = FEE + profit
+       total_markup = FEE + profit
 
-    selling_price = round(price * (1 + total_markup), 2)
+       selling_price = round(price * (1 + total_markup), 2)
 
-    # ===== SHEET UPDATE (FIXED) =====
-    sheet.update(f"H{i}:O{i}", [[
-        float(price),
-        "", "", "",
-        int(stock),
-        float(selling_price),
-        status,
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    ]])
+# ===== STATUS (MISSING FIX) =====
+       status = "ACTIVE" if stock > 0 else "INACTIVE"
 
+# ===== SHEET UPDATE (FIXED) =====
+       sheet.update(f"H{i}:O{i}", [[
+       float(price),
+       "", "", "",
+       int(stock),
+       float(selling_price),
+       status,
+       datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+]])
     # ===== XML =====
     if status == "ACTIVE":
         product = ET.SubElement(root, "product")
