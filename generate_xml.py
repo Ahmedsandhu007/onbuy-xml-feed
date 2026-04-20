@@ -135,48 +135,47 @@ def extract_ebay_id(url):
 
 def get_ebay_data(url, token):
     try:
-        item_id = extract_ebay_id(url)
+        import requests
+        import re
 
-        if not item_id:
-            print("Invalid eBay URL")
+        # Extract item ID
+        match = re.search(r"/itm/(\d+)", url)
+        if not match:
             return None, None
+
+        item_id = match.group(1)
 
         headers = {
             "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
             "X-EBAY-C-MARKETPLACE-ID": "EBAY_GB"
         }
 
-        res = requests.get(
-            f"https://api.ebay.com/buy/browse/v1/item/v1|{item_id}|0",
-            headers=headers,
-            timeout=20
-        )
+        endpoint = f"https://api.ebay.com/buy/browse/v1/item/v1|{item_id}|0"
 
+        res = requests.get(endpoint, headers=headers)
         data = res.json()
 
         print("eBay RAW:", data)
 
-        # PRICE
+        # ✅ PRICE FIX
         price = None
-        if data.get("price"):
+        if "price" in data:
             price = float(data["price"]["value"])
 
-        # STOCK
-        availability = data.get("availability", {}).get("shipToLocationAvailability", {})
+        # ✅ STOCK FIX (REAL VALUE)
+        stock = 0
+        if "estimatedAvailabilities" in data:
+            avail = data["estimatedAvailabilities"][0]
 
-        if availability.get("quantity"):
-            stock = availability["quantity"]
-        elif availability.get("availabilityThreshold"):
-            stock = availability["availabilityThreshold"]
-        else:
-            stock = 1
+            if avail.get("estimatedAvailabilityStatus") == "IN_STOCK":
+                stock = avail.get("estimatedAvailableQuantity", 5)
 
         print(f"eBay(API OFFICIAL) → Stock: {stock}, Price: {price}")
-
         return stock, price
 
     except Exception as e:
-        print("eBay error:", e)
+        print("eBay API error:", e)
         return None, None
 
 
