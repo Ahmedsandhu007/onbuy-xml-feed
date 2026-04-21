@@ -2,7 +2,7 @@ name: Generate OnBuy Feed
 
 on:
   schedule:
-    - cron: "*/30 * * * *"   # every 30 minutes
+    - cron: "0 */3 * * *"   # ✅ every 3 hours
   workflow_dispatch:
 
 jobs:
@@ -24,9 +24,10 @@ jobs:
       - name: Run script
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          RAINFOREST_API_KEY: ${{ secrets.RAINFOREST_API_KEY }}
           EBAY_CLIENT_ID: ${{ secrets.EBAY_CLIENT_ID }}
           EBAY_CLIENT_SECRET: ${{ secrets.EBAY_CLIENT_SECRET }}
+          ONBUY_CONSUMER_KEY: ${{ secrets.ONBUY_CONSUMER_KEY }}
+          ONBUY_SECRET_KEY: ${{ secrets.ONBUY_SECRET_KEY }}
         run: python generate_xml.py
 
       - name: Commit and push XML
