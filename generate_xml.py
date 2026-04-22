@@ -113,14 +113,24 @@ def generate_sign(params, app_secret):
 
 
 def extract_aliexpress_id(url):
+    # primary pattern
     match = re.search(r"/item/(\d+)", url)
-    return match.group(1) if match else None
+    if match:
+        return match.group(1)
+
+    # fallback for all formats
+    match = re.search(r"(\d{12,})", url)
+    if match:
+        return match.group(1)
+
+    return None
 
 
 def get_aliexpress_data(url):
     try:
         product_id = extract_aliexpress_id(url)
         if not product_id:
+            print("AliExpress → Invalid URL")
             return None, None
 
         params = {
@@ -144,7 +154,13 @@ def get_aliexpress_data(url):
 
         product = data.get("aliexpress_ds_product_get_response", {})
 
-        price = float(product.get("target_sale_price", 0))
+        # 🔥 FIX: nested response
+        if "result" in product:
+            product = product["result"]
+
+        print("AliExpress RAW:", product)
+
+        price = float(product.get("target_sale_price", 0) or 0)
         stock = 5 if price else 0
 
         print(f"AliExpress → Stock: {stock}, Price: {price}")
@@ -232,8 +248,12 @@ for idx, row in enumerate(data):
 
     api_calls += 1
 
-    price = price or row.get("Cost Price (£)", 0)
-    stock = stock if stock is not None else row.get("Stock", 0)
+    # ===== SAFE FALLBACK =====
+    if not price or price == 0:
+        price = row.get("Cost Price (£)", 0)
+
+    if stock is None:
+        stock = row.get("Stock", 0)
 
     # ===== PRICING =====
     profit = random.uniform(MIN_PROFIT, MAX_PROFIT)
