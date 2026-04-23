@@ -101,18 +101,29 @@ def get_aliexpress_data(url):
     try:
         print("Ali URL:", url)
 
-        # 🔥 Extract ALL prices from URL
         matches = re.findall(r'%21([\d\.]+)%21', url)
 
-        if matches and len(matches) >= 2:
-            # ✅ SECOND value = actual selling price
-            price = float(matches[1])
+        # 🔥 filter only realistic prices
+        prices = []
+        for m in matches:
+            try:
+                val = float(m)
+
+                # ✅ keep only valid price range
+                if 0.5 < val < 1000:
+                    prices.append(val)
+
+            except:
+                continue
+
+        if prices:
+            price = prices[0] if len(prices) == 1 else prices[1]
             stock = 5
 
-            print(f"AliExpress (URL FIXED) → Stock: {stock}, Price: {price}")
+            print(f"AliExpress (FINAL) → Stock: {stock}, Price: {price}")
             return stock, price
 
-        print("AliExpress → Price not found in URL")
+        print("AliExpress → No valid price found")
         return None, None
 
     except Exception as e:
