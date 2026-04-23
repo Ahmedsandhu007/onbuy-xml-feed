@@ -24,7 +24,7 @@ MAX_PROFIT = 0.25
 UNDERCUT_FACTOR = 0.98
 
 TOTAL_BATCHES = 5
-SKIP_HOURS = 6
+SKIP_HOURS = 0
 DAILY_API_LIMIT = 4800
 
 PK_TZ = ZoneInfo("Asia/Karachi")
@@ -196,8 +196,8 @@ batch_index = current_hour % TOTAL_BATCHES
 # ================= MAIN =================
 for idx, row in enumerate(data):
 
-    if idx % TOTAL_BATCHES != batch_index:
-        continue
+    #if idx % TOTAL_BATCHES != batch_index:
+        #continue
 
     i = idx + 2
 
