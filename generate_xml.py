@@ -102,55 +102,51 @@ def get_aliexpress_data(url):
         print("Ali URL:", url)
 
         headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept-Language": "en-US,en;q=0.9"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Accept-Language": "en-GB,en;q=0.9",
+            "Referer": "https://www.aliexpress.com/",
+            "Connection": "keep-alive"
         }
 
-        res = requests.get(url, headers=headers, timeout=15)
+        session = requests.Session()
+        res = session.get(url, headers=headers, timeout=20)
+
         html = res.text
 
-        # 🔥 Multiple patterns (AliExpress changes frequently)
-        patterns = [
-            r'window\.runParams\s*=\s*({.*?});',
-            r'window\.__INIT_DATA__\s*=\s*({.*?});',
-            r'window\.__pageData\s*=\s*({.*?});'
-        ]
-
-        data = None
-
-        for pattern in patterns:
-            match = re.search(pattern, html)
-            if match:
-                try:
-                    data = json.loads(match.group(1))
-                    break
-                except:
-                    continue
-
-        if not data:
-            print("AliExpress → No data found (HTML changed or blocked)")
+        # 🔥 DEBUG: detect block
+        if "captcha" in html.lower() or "punish" in html.lower():
+            print("AliExpress → BLOCKED by bot protection")
             return None, None
 
-        # 🔥 Try multiple paths
-        price = None
+        # 🔥 NEW METHOD: Extract price directly from HTML
+        price_match = re.search(r'"value":"([\d\.]+)"', html)
 
-        try:
-            price = float(data["data"]["priceModule"]["minAmount"]["value"])
-        except:
+        if price_match:
+            price = float(price_match.group(1))
+            stock = 5
+
+            print(f"AliExpress (FAST SCRAPE) → Stock: {stock}, Price: {price}")
+            return stock, price
+
+        # 🔥 FALLBACK JSON extraction
+        match = re.search(r'window\.__INIT_DATA__\s*=\s*({.*?});', html)
+
+        if match:
+            data = json.loads(match.group(1))
+
             try:
-                price = float(data["data"]["priceModule"]["formatedActivityPrice"])
+                price = float(
+                    data["data"]["root"]["fields"]["priceModule"]["minAmount"]["value"]
+                )
+                stock = 5
+
+                print(f"AliExpress (JSON SCRAPE) → Stock: {stock}, Price: {price}")
+                return stock, price
             except:
                 pass
 
-        if not price:
-            print("AliExpress → Price not found")
-            return None, None
-
-        stock = 5
-
-        print(f"AliExpress (SCRAPE) → Stock: {stock}, Price: {price}")
-
-        return stock, price
+        print("AliExpress → Price not found (structure changed)")
+        return None, None
 
     except Exception as e:
         print("AliExpress scrape error:", e)
