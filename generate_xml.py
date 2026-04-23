@@ -18,10 +18,7 @@ EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 ONBUY_CONSUMER_KEY = os.getenv("ONBUY_CONSUMER_KEY")
 ONBUY_SECRET_KEY = os.getenv("ONBUY_SECRET_KEY")
 
-FEE = 0.18
-MIN_PROFIT = 0.21
-MAX_PROFIT = 0.25
-UNDERCUT_FACTOR = 0.98
+MIN_PROFIT = 0.15   # ✅ 15% minimum
 
 TOTAL_BATCHES = 5
 SKIP_HOURS = 6
@@ -45,7 +42,7 @@ data = sheet.get_all_records()
 # ================= EBAY TOKEN =================
 def get_ebay_token():
     encoded = base64.b64encode(
-        f"{EBAY_CLIENT_ID.strip()}:{EBAY_CLIENT_SECRET.strip()}".encode()
+        f"{EBAY_CLIENT_ID}:{EBAY_CLIENT_SECRET}".encode()
     ).decode()
 
     res = requests.post(
@@ -95,41 +92,6 @@ def get_ebay_data(url, token):
         print("eBay error:", e)
         return None, None
 
-# ================= ALIEXPRESS (STABLE) =================
-def get_aliexpress_data(url):
-    try:
-        print("Ali URL:", url)
-
-        # Extract all encoded numbers
-        matches = re.findall(r'%21([\d\.]+)%21', url)
-
-        valid_prices = []
-
-        for m in matches:
-            try:
-                val = float(m)
-
-                # realistic price range filter
-                if 1.5 < val < 500:
-                    valid_prices.append(val)
-
-            except:
-                continue
-
-        if valid_prices:
-            price = min(valid_prices)  # safest choice
-            stock = 5
-
-            print(f"AliExpress → Stock: {stock}, Price: {price}")
-            return stock, price
-
-        print("AliExpress → No valid price found")
-        return None, None
-
-    except Exception as e:
-        print("AliExpress error:", e)
-        return None, None
-
 # ================= ONBUY =================
 def update_onbuy_product(sku, price, quantity):
     try:
@@ -175,69 +137,47 @@ for idx, row in enumerate(data):
     i = idx + 2
 
     if api_calls >= DAILY_API_LIMIT:
-        print("API LIMIT REACHED")
         break
-
-    # ===== SKIP LOGIC =====
-    last_checked_str = row.get("Last Checked Time", "")
-
-    if last_checked_str:
-        try:
-            last_checked = datetime.strptime(
-                last_checked_str, "%Y-%m-%d %H:%M:%S"
-            ).replace(tzinfo=PK_TZ)
-
-            if datetime.now(PK_TZ) - last_checked < timedelta(hours=SKIP_HOURS):
-                print(f"{i} | SKIPPED")
-                continue
-        except:
-            pass
 
     url = str(row.get("Supplier URL", "")).lower()
 
-    stock, price = None, None
-
-    # ===== SOURCE =====
-    if "ebay." in url:
-        stock, price = get_ebay_data(url, ebay_token)
-
-    elif "aliexpress" in url:
-        stock, price = get_aliexpress_data(url)
-
-    api_calls += 1
-
-    # ===== FALLBACK =====
-    if not price:
-        price = row.get("Cost Price (£)", 0)
-
-    if stock is None:
-        stock = row.get("Stock", 0)
-
-    # ===== PRICING =====
-    profit = random.uniform(MIN_PROFIT, MAX_PROFIT)
-
-    selling_price = price * (1 + FEE + profit)
-    selling_price = round(selling_price) - 0.01
-
-    # ===== CHANGE CHECK =====
-    old_price = float(row.get("Selling Price", 0))
-    old_stock = int(row.get("Stock", 0))
-
-    if abs(old_price - selling_price) < 0.5 and old_stock == stock:
-        print(f"{i} | NO CHANGE")
+    if "ebay." not in url:
         continue
 
+    stock, cost_price = get_ebay_data(url, ebay_token)
+    api_calls += 1
+
+    if not cost_price:
+        continue
+
+    # ================= NEW PRICING =================
+
+    # Minimum allowed price
+    min_price = cost_price * (1 + MIN_PROFIT)
+
+    # Your current selling price from sheet
+    current_price = float(row.get("Selling Price", 0) or 0)
+
+    # Random boost (YOUR CONTROL RANGE)
+    boost_percent = random.uniform(0.05, 0.30)   # adjustable
+
+    adjusted_price = current_price * (1 + boost_percent) if current_price > 0 else min_price
+
+    final_price = max(min_price, adjusted_price)
+
+    final_price = round(final_price) - 0.01
+
+    # ================= UPDATE =================
     status = "ACTIVE" if stock > 0 else "INACTIVE"
     now_pk = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
-    # ===== SHEET UPDATE =====
     sheet.update(
         range_name=f"H{i}:O{i}",
         values=[[
-            float(price),
+            float(cost_price),
             "", "", "",
             int(stock),
-            float(selling_price),
+            float(final_price),
             status,
             now_pk
         ]]
@@ -245,26 +185,23 @@ for idx, row in enumerate(data):
 
     sheet.update(range_name=f"T{i}", values=[[now_pk]])
 
-    # ===== ONBUY =====
     update_onbuy_product(
         sku=row.get("SKU"),
-        price=selling_price,
+        price=final_price,
         quantity=stock
     )
 
-    # ===== XML =====
+    # ================= XML =================
     if status == "ACTIVE":
         product = ET.SubElement(root, "product")
         ET.SubElement(product, "sku").text = str(row.get("SKU", ""))
-        ET.SubElement(product, "title").text = row.get("Title", "")
-        ET.SubElement(product, "price").text = str(selling_price)
+        ET.SubElement(product, "price").text = str(final_price)
         ET.SubElement(product, "quantity").text = str(stock)
 
-    print(f"{i} | £{price} → £{selling_price} | Stock: {stock}")
+    print(f"{i} | £{cost_price} → £{final_price} | Stock: {stock}")
 
     time.sleep(0.5)
 
-# ================= SAVE XML =================
 ET.ElementTree(root).write("feed.xml", encoding="utf-8", xml_declaration=True)
 
 print(f"DONE | API CALLS USED: {api_calls}")
