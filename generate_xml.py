@@ -96,35 +96,57 @@ def get_ebay_data(url, token):
         print("eBay error:", e)
         return None, None
 
-# ================= ALIEXPRESS (SCRAPING) =================
+# ================= ALIEXPRESS (FIXED SCRAPER) =================
 def get_aliexpress_data(url):
     try:
+        print("Ali URL:", url)
+
         headers = {
-            "User-Agent": "Mozilla/5.0"
+            "User-Agent": "Mozilla/5.0",
+            "Accept-Language": "en-US,en;q=0.9"
         }
 
         res = requests.get(url, headers=headers, timeout=15)
         html = res.text
 
-        match = re.search(r'window\.runParams\s*=\s*({.*?});', html)
+        # 🔥 Multiple patterns (AliExpress changes frequently)
+        patterns = [
+            r'window\.runParams\s*=\s*({.*?});',
+            r'window\.__INIT_DATA__\s*=\s*({.*?});',
+            r'window\.__pageData\s*=\s*({.*?});'
+        ]
 
-        if not match:
-            print("AliExpress → Failed to extract data")
+        data = None
+
+        for pattern in patterns:
+            match = re.search(pattern, html)
+            if match:
+                try:
+                    data = json.loads(match.group(1))
+                    break
+                except:
+                    continue
+
+        if not data:
+            print("AliExpress → No data found (HTML changed or blocked)")
             return None, None
 
-        data = json.loads(match.group(1))
-        product = data.get("data", {})
-
+        # 🔥 Try multiple paths
         price = None
+
         try:
-            price = float(product["priceModule"]["minAmount"]["value"])
+            price = float(data["data"]["priceModule"]["minAmount"]["value"])
         except:
             try:
-                price = float(product["priceModule"]["formatedActivityPrice"])
+                price = float(data["data"]["priceModule"]["formatedActivityPrice"])
             except:
                 pass
 
-        stock = 5 if price else 0
+        if not price:
+            print("AliExpress → Price not found")
+            return None, None
+
+        stock = 5
 
         print(f"AliExpress (SCRAPE) → Stock: {stock}, Price: {price}")
 
@@ -183,7 +205,6 @@ for idx, row in enumerate(data):
         print("API LIMIT REACHED — STOPPING")
         break
 
-    # ===== SKIP LOGIC =====
     last_checked_str = row.get("Last Checked Time", "")
 
     if last_checked_str:
@@ -202,7 +223,7 @@ for idx, row in enumerate(data):
 
     stock, price = None, None
 
-    # ===== SOURCE DETECTION =====
+    # ===== SOURCE =====
     if "ebay." in url:
         stock, price = get_ebay_data(url, ebay_token)
 
@@ -211,7 +232,7 @@ for idx, row in enumerate(data):
 
     api_calls += 1
 
-    # ===== SAFE FALLBACK =====
+    # ===== FALLBACK =====
     if not price or price == 0:
         price = row.get("Cost Price (£)", 0)
 
