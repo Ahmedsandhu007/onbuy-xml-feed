@@ -63,37 +63,38 @@ def get_ebay_token():
     return res.json().get("access_token")
 
 # ================= EBAY =================
-def get_ebay_data(url, token):
+def get_aliexpress_data(url):
     try:
-        match = re.search(r"/itm/(\d+)", url)
-        if not match:
-            return None, None
+        print("Ali URL:", url)
 
-        item_id = match.group(1)
+        matches = re.findall(r'%21([\d\.]+)%21', url)
 
-        res = requests.get(
-            f"https://api.ebay.com/buy/browse/v1/item/v1|{item_id}|0",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-EBAY-C-MARKETPLACE-ID": "EBAY_GB"
-            }
-        )
+        valid_prices = []
 
-        data = res.json()
+        for m in matches:
+            try:
+                val = float(m)
 
-        price = float(data.get("price", {}).get("value", 0))
+                # realistic product price range
+                if 1.5 < val < 500:
+                    valid_prices.append(val)
 
-        stock = 0
-        avail = data.get("estimatedAvailabilities", [])
-        if avail and avail[0].get("estimatedAvailabilityStatus") == "IN_STOCK":
-            stock = avail[0].get("estimatedAvailableQuantity", 5)
+            except:
+                continue
 
-        print(f"eBay → Stock: {stock}, Price: {price}")
+        if valid_prices:
+            # 🔥 pick the lowest valid price (usually discounted price)
+            price = min(valid_prices)
+            stock = 5
 
-        return stock, price
+            print(f"AliExpress (STABLE) → Stock: {stock}, Price: {price}")
+            return stock, price
+
+        print("AliExpress → No valid price found")
+        return None, None
 
     except Exception as e:
-        print("eBay error:", e)
+        print("AliExpress error:", e)
         return None, None
 
 # ================= ALIEXPRESS (FIXED SCRAPER) =================
