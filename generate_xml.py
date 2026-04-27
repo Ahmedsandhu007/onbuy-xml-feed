@@ -35,6 +35,18 @@ client = gspread.authorize(creds)
 sheet = client.open("OnBuy_Feed_Master").sheet1
 data = sheet.get_all_records()
 
+# ================= HELPERS =================
+def is_changed(old, new):
+    try:
+        return str(old).strip() != str(new).strip()
+    except:
+        return True
+
+def clean_category(cat):
+    if not cat:
+        return "General"
+    return cat.split(">")[-1].strip()
+
 # ================= EBAY TOKEN =================
 def get_ebay_token():
     encoded = base64.b64encode(
@@ -54,12 +66,6 @@ def get_ebay_token():
     )
 
     return res.json().get("access_token")
-
-# ================= CATEGORY =================
-def clean_category(cat):
-    if not cat:
-        return "General"
-    return cat.split(">")[-1].strip()
 
 # ================= EBAY FETCH =================
 def get_ebay_data(url, token):
@@ -114,8 +120,6 @@ def get_ebay_data(url, token):
             status = avail[0].get("estimatedAvailabilityStatus")
             if status == "IN_STOCK":
                 stock = avail[0].get("estimatedAvailableQuantity", 5)
-            else:
-                stock = 0
 
         return stock, price, {
             "title": title,
@@ -135,14 +139,12 @@ token = get_ebay_token()
 
 api_calls = 0
 
-# 🔥 BATCH CONTROL
 current_hour = datetime.now(PK_TZ).hour
 batch_index = current_hour % TOTAL_BATCHES
 
-# ================= MAIN (BATCHED) =================
+# ================= MAIN =================
 for idx, row in enumerate(data):
 
-    # batching
     if idx % TOTAL_BATCHES != batch_index:
         continue
 
@@ -167,35 +169,53 @@ for idx, row in enumerate(data):
     category = clean_category(extra["category"])
     brand = extra["brand"]
 
-    # description from sheet ONLY
     raw_desc = row.get("Description")
     description = re.sub(r"<.*?>", "", str(raw_desc or "")).strip()
 
     min_price = (cost_price * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
     final_price = round(min_price) - 0.01
 
-    sheet.update(f"B{i}:E{i}", [[title, description, brand, category]])
-    sheet.update(f"Q{i}:R{i}", [[image, additional]])
+    # ===== EXISTING VALUES =====
+    old_title = row.get("Title")
+    old_brand = row.get("Brand")
+    old_category = row.get("Category")
+    old_image = row.get("Image URL")
+    old_price = row.get("Selling Price (£)")
+    old_stock = row.get("Stock")
 
-    sheet.update(f"H{i}:O{i}", [[
-        float(cost_price),
-        "", "", "",
-        int(stock),
-        float(final_price),
-        "ACTIVE" if stock > 0 else "INACTIVE",
-        datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
-    ]])
+    changed = (
+        is_changed(old_title, title) or
+        is_changed(old_brand, brand) or
+        is_changed(old_category, category) or
+        is_changed(old_image, image) or
+        is_changed(old_price, final_price) or
+        is_changed(old_stock, stock)
+    )
 
-    print(f"{i} updated")
+    if changed:
+
+        sheet.update(f"B{i}:E{i}", [[title, description, brand, category]])
+        sheet.update(f"Q{i}:R{i}", [[image, additional]])
+
+        sheet.update(f"H{i}:O{i}", [[
+            float(cost_price),
+            "", "", "",
+            int(stock),
+            float(final_price),
+            "ACTIVE" if stock > 0 else "INACTIVE",
+            datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
+        ]])
+
+        print(f"{i} updated")
+
+    else:
+        print(f"{i} skipped")
 
     time.sleep(0.4)
 
-# ================= FULL XML =================
-print("\nBuilding full XML...\n")
-
+# ================= XML =================
 for row in data:
     try:
-        sku = str(row.get("SKU"))
         price = float(re.sub(r"[^\d.]", "", str(row.get("Selling Price (£)", 0)) or "0"))
         stock = int(row.get("Stock") or 0)
 
@@ -204,7 +224,7 @@ for row in data:
 
         product = ET.SubElement(root, "product")
 
-        ET.SubElement(product, "sku").text = sku
+        ET.SubElement(product, "sku").text = str(row.get("SKU"))
         ET.SubElement(product, "name").text = str(row.get("Title"))
         ET.SubElement(product, "description").text = str(row.get("Description"))
         ET.SubElement(product, "brand").text = str(row.get("Brand") or "Unbranded")
