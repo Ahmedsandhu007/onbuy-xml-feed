@@ -20,7 +20,9 @@ ONBUY_SECRET_KEY = os.getenv("ONBUY_SECRET_KEY")
 MIN_PROFIT = 0.15
 PLATFORM_FEE = 0.18
 
+TOTAL_BATCHES = 5
 DAILY_API_LIMIT = 4800
+
 PK_TZ = ZoneInfo("Asia/Karachi")
 
 # ================= GOOGLE SHEET =================
@@ -123,8 +125,16 @@ ebay_token = get_ebay_token()
 
 api_calls = 0
 
+#BATCH CONTROL
+current_hour = datetime.now(PK_TZ).hour
+batch_index = current_hour % TOTAL_BATCHES
+
 # ================= MAIN =================
 for idx, row in enumerate(data):
+
+    #BATCH FILTER
+    if idx % TOTAL_BATCHES != batch_index:
+        continue
 
     i = idx + 2
 
