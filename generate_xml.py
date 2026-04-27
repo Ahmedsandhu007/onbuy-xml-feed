@@ -18,11 +18,11 @@ EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 ONBUY_CONSUMER_KEY = os.getenv("ONBUY_CONSUMER_KEY")
 ONBUY_SECRET_KEY = os.getenv("ONBUY_SECRET_KEY")
 
-MIN_PROFIT = 0.15   # 15% minimum
-PLATFORM_FEE = 0.18 # 18% fee
+MIN_PROFIT = 0.15
+PLATFORM_FEE = 0.18
 
 TOTAL_BATCHES = 5
-SKIP_HOURS = 0
+SKIP_HOURS = 6
 DAILY_API_LIMIT = 4800
 
 PK_TZ = ZoneInfo("Asia/Karachi")
@@ -155,7 +155,11 @@ for idx, row in enumerate(data):
 
     min_price = (cost_price * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
 
-    current_price = float(row.get("Selling Price", 0) or 0)
+    current_price = float(
+        row.get("Selling Price (£)")
+        or row.get("Selling Price")
+        or 0
+    )
 
     if current_price > 0:
         if current_price >= min_price:
