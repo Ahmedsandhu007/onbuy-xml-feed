@@ -151,21 +151,20 @@ for idx, row in enumerate(data):
     if not cost_price:
         continue
 
-    # ================= FIXED PRICING =================
+    # ================= FIXED PRICING (FINAL) =================
+
+    raw_price = row.get("Selling Price (£)")
+
+    try:
+        clean = re.sub(r"[^\d.]", "", str(raw_price))
+        current_price = float(clean) if clean else 0
+    except:
+        current_price = 0
 
     min_price = (cost_price * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
 
-    current_price = float(
-        row.get("Selling Price (£)")
-        or row.get("Selling Price")
-        or 0
-    )
-
-    if current_price > 0:
-        if current_price >= min_price:
-            final_price = current_price
-        else:
-            final_price = min_price
+    if current_price > 0 and current_price >= min_price:
+        final_price = current_price
     else:
         final_price = min_price
 
