@@ -17,6 +17,9 @@ EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 MIN_PROFIT = 0.15
 PLATFORM_FEE = 0.18
 
+TOTAL_BATCHES = 5
+DAILY_API_LIMIT = 4800
+
 PK_TZ = ZoneInfo("Asia/Karachi")
 
 # ================= GOOGLE SHEET =================
@@ -89,9 +92,8 @@ def get_ebay_data(url, token):
 
         category = data.get("categoryPath", "")
 
-        # ===== BRAND FROM EBAY =====
+        # BRAND
         brand = None
-
         if data.get("brand"):
             brand = data.get("brand")
 
@@ -104,7 +106,7 @@ def get_ebay_data(url, token):
         if not brand:
             brand = "Unbranded"
 
-        # ===== STOCK =====
+        # STOCK
         stock = 0
         avail = data.get("estimatedAvailabilities", [])
 
@@ -114,8 +116,6 @@ def get_ebay_data(url, token):
                 stock = avail[0].get("estimatedAvailableQuantity", 5)
             else:
                 stock = 0
-
-        print(f"eBay → {title} | Brand: {brand} | Stock: {stock}")
 
         return stock, price, {
             "title": title,
@@ -129,11 +129,26 @@ def get_ebay_data(url, token):
         print("eBay error:", e)
         return None, None, None
 
-# ================= MAIN =================
+# ================= INIT =================
 root = ET.Element("products")
 token = get_ebay_token()
 
+api_calls = 0
+
+# 🔥 BATCH CONTROL
+current_hour = datetime.now(PK_TZ).hour
+batch_index = current_hour % TOTAL_BATCHES
+
+# ================= MAIN (BATCHED) =================
 for idx, row in enumerate(data):
+
+    # batching
+    if idx % TOTAL_BATCHES != batch_index:
+        continue
+
+    if api_calls >= DAILY_API_LIMIT:
+        break
+
     i = idx + 2
 
     url = str(row.get("Supplier URL", "")).lower()
@@ -141,26 +156,24 @@ for idx, row in enumerate(data):
         continue
 
     stock, cost_price, extra = get_ebay_data(url, token)
+    api_calls += 1
 
     if not cost_price or not extra:
         continue
 
-    # ===== DATA FROM EBAY =====
-    title = extra.get("title", "")
-    image = extra.get("image", "")
-    additional = ", ".join(extra.get("additional", []))
-    category = clean_category(extra.get("category"))
-    brand = extra.get("brand", "Unbranded").strip()
+    title = extra["title"]
+    image = extra["image"]
+    additional = ", ".join(extra["additional"])
+    category = clean_category(extra["category"])
+    brand = extra["brand"]
 
-    # ===== DESCRIPTION FROM SHEET ONLY =====
+    # description from sheet ONLY
     raw_desc = row.get("Description")
     description = re.sub(r"<.*?>", "", str(raw_desc or "")).strip()
 
-    # ===== PRICE =====
     min_price = (cost_price * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
     final_price = round(min_price) - 0.01
 
-    # ===== UPDATE SHEET =====
     sheet.update(f"B{i}:E{i}", [[title, description, brand, category]])
     sheet.update(f"Q{i}:R{i}", [[image, additional]])
 
@@ -173,28 +186,36 @@ for idx, row in enumerate(data):
         datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
     ]])
 
-    print(f"{i} → UPDATED")
+    print(f"{i} updated")
 
-    # ===== XML =====
-    product = ET.SubElement(root, "product")
+    time.sleep(0.4)
 
-    ET.SubElement(product, "sku").text = str(row.get("SKU"))
-    ET.SubElement(product, "name").text = title
-    ET.SubElement(product, "description").text = description
-    ET.SubElement(product, "brand").text = brand
-    ET.SubElement(product, "category").text = category
-    ET.SubElement(product, "price").text = str(final_price)
-    ET.SubElement(product, "quantity").text = str(stock)
-    ET.SubElement(product, "image").text = image
+# ================= FULL XML =================
+print("\nBuilding full XML...\n")
 
-    for img in extra.get("additional", []):
-        ET.SubElement(product, "additional_image").text = img
+for row in data:
+    try:
+        sku = str(row.get("SKU"))
+        price = float(re.sub(r"[^\d.]", "", str(row.get("Selling Price (£)", 0)) or "0"))
+        stock = int(row.get("Stock") or 0)
 
-    ET.SubElement(product, "condition").text = "new"
+        if price <= 0:
+            continue
 
-    time.sleep(0.3)
+        product = ET.SubElement(root, "product")
 
-# ================= SAVE =================
+        ET.SubElement(product, "sku").text = sku
+        ET.SubElement(product, "name").text = str(row.get("Title"))
+        ET.SubElement(product, "description").text = str(row.get("Description"))
+        ET.SubElement(product, "brand").text = str(row.get("Brand") or "Unbranded")
+        ET.SubElement(product, "category").text = str(row.get("Category"))
+        ET.SubElement(product, "price").text = str(price)
+        ET.SubElement(product, "quantity").text = str(stock)
+        ET.SubElement(product, "image").text = str(row.get("Image URL"))
+
+    except:
+        continue
+
 ET.ElementTree(root).write("feed.xml", encoding="utf-8", xml_declaration=True)
 
-print("\n✅ TEST RUN COMPLETE — CLEAN & CORRECT")
+print(f"\nDONE | API CALLS USED: {api_calls}")
