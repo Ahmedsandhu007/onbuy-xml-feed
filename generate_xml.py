@@ -17,8 +17,8 @@ EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 ONBUY_CONSUMER_KEY = os.getenv("ONBUY_CONSUMER_KEY")
 ONBUY_SECRET_KEY = os.getenv("ONBUY_SECRET_KEY")
 
-MIN_PROFIT = 0.15      # 15% minimum profit
-PLATFORM_FEE = 0.18    # 18% OnBuy fee
+MIN_PROFIT = 0.15
+PLATFORM_FEE = 0.18
 
 TOTAL_BATCHES = 5
 DAILY_API_LIMIT = 4800
@@ -65,66 +65,92 @@ def get_ebay_token():
     return data["access_token"]
 
 # ================= EBAY =================
+
 def extract_item_id(url):
-    if not url:
+    match = re.search(r"/itm/(?:.*?/)?(\d{9,12})", str(url))
+    return match.group(1) if match else None
+
+
+def search_ebay_fallback(query, token):
+    print(f"🔁 Fallback search for: {query}")
+
+    res = requests.get(
+        "https://api.ebay.com/buy/browse/v1/item_summary/search",
+        headers={
+            "Authorization": f"Bearer {token}"
+        },
+        params={
+            "q": query,
+            "limit": 1
+        }
+    )
+
+    data = res.json()
+    items = data.get("itemSummaries", [])
+
+    if not items:
         return None
 
-    url = str(url)
+    return items[0].get("itemId")
 
-    # Handles all valid eBay formats
-    match = re.search(r"/itm/(?:.*?/)?(\d{9,12})", url)
-    if match:
-        return match.group(1)
 
-    return None
+def fetch_item(item_id, token):
+    res = requests.get(
+        f"https://api.ebay.com/buy/browse/v1/item/{item_id}",
+        headers={
+            "Authorization": f"Bearer {token}"
+        }
+    )
+
+    if res.status_code != 200:
+        return None
+
+    return res.json()
 
 
 def get_ebay_data(url, token):
     try:
         item_id = extract_item_id(url)
 
-        if not item_id:
-            print(f"❌ Invalid eBay URL: {url}")
+        # Try direct fetch
+        if item_id:
+            print(f"🔎 Trying direct ID: {item_id}")
+            data = fetch_item(item_id, token)
+
+            if not data:
+                print("❌ Direct fetch failed, trying fallback...")
+                item_id = search_ebay_fallback(item_id, token)
+                if item_id:
+                    data = fetch_item(item_id, token)
+        else:
+            # No ID → search directly
+            item_id = search_ebay_fallback(url, token)
+            if item_id:
+                data = fetch_item(item_id, token)
+            else:
+                return None, None
+
+        if not data:
+            print("❌ No valid eBay data found")
             return None, None
 
-        print(f"🔎 Fetching eBay ID: {item_id}")
-
-        res = requests.get(
-            f"https://api.ebay.com/buy/browse/v1/item/{item_id}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "X-EBAY-C-MARKETPLACE-ID": "EBAY_GB"
-            }
-        )
-
-        if res.status_code != 200:
-            print(f"❌ API ERROR ({item_id}): {res.text}")
-            return None, None
-
-        data = res.json()
-
-        price_data = data.get("price")
-        if not price_data:
-            print(f"❌ No price found ({item_id})")
-            return None, None
-
-        price = float(price_data.get("value", 0))
+        price = float(data.get("price", {}).get("value", 0))
 
         stock = 0
         avail = data.get("estimatedAvailabilities", [])
-        if avail:
-            if avail[0].get("estimatedAvailabilityStatus") == "IN_STOCK":
-                stock = avail[0].get("estimatedAvailableQuantity", 5)
+        if avail and avail[0].get("estimatedAvailabilityStatus") == "IN_STOCK":
+            stock = avail[0].get("estimatedAvailableQuantity", 5)
 
-        print(f"eBay → Price: £{price} | Stock: {stock}")
+        print(f"✅ eBay → £{price} | Stock {stock}")
 
         return stock, price
 
     except Exception as e:
-        print("❌ eBay exception:", e)
+        print("❌ eBay error:", e)
         return None, None
 
 # ================= ONBUY =================
+
 def update_onbuy_product(sku, price, quantity):
     try:
         url = "https://api.onbuy.com/v2/products/update"
@@ -177,19 +203,17 @@ for idx, row in enumerate(data):
 
     url = str(row.get("Supplier URL", "")).strip()
 
-    if "/itm/" not in url:
-        print(f"⚠️ Skipping invalid URL: {url}")
+    if "ebay." not in url:
         continue
 
     stock, cost_price = get_ebay_data(url, ebay_token)
     api_calls += 1
 
     if not cost_price:
-        print(f"❌ Failed fetch for row {i}")
+        print(f"❌ Skipping row {i}")
         continue
 
     # ================= PRICING =================
-
     min_price = (cost_price * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
 
     user_price = float(row.get("Selling Price", 0) or 0)
@@ -211,7 +235,7 @@ for idx, row in enumerate(data):
     status = "ACTIVE" if stock > 0 else "INACTIVE"
     now_pk = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
-    # ================= UPDATE SHEET =================
+    # ================= SHEET =================
     sheet.update(
         range_name=f"H{i}:O{i}",
         values=[[
@@ -224,7 +248,7 @@ for idx, row in enumerate(data):
         ]]
     )
 
-    # ================= UPDATE ONBUY =================
+    # ================= ONBUY =================
     update_onbuy_product(
         sku=row.get("SKU"),
         price=final_price,
@@ -242,11 +266,11 @@ for idx, row in enumerate(data):
     net = final_price * (1 - PLATFORM_FEE)
     profit = net - cost_price
 
-    print(f"{i} | Cost £{cost_price} → Sell £{final_price} | Profit £{round(profit,2)} | Stock {stock}")
+    print(f"{i} | Cost £{cost_price} → £{final_price} | Profit £{round(profit,2)} | Stock {stock}")
 
     time.sleep(0.5)
 
-# ================= SAVE XML =================
+# ================= SAVE =================
 ET.ElementTree(root).write("feed.xml", encoding="utf-8", xml_declaration=True)
 
 print(f"\nDONE | API CALLS USED: {api_calls}")
