@@ -151,17 +151,14 @@ for idx, row in enumerate(data):
     if not cost_price:
         continue
 
-    # ================= UPDATED PRICING =================
+    # ================= FIXED PRICING =================
 
     min_price = (cost_price * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
 
     current_price = float(row.get("Selling Price", 0) or 0)
 
     if current_price > 0:
-        net = current_price * (1 - PLATFORM_FEE)
-        actual_profit = (net - cost_price) / cost_price
-
-        if actual_profit >= MIN_PROFIT:
+        if current_price >= min_price:
             final_price = current_price
         else:
             final_price = min_price
