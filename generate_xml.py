@@ -52,39 +52,45 @@ def get_ebay_token():
 
     return res.json().get("access_token")
 
-# ================= CATEGORY =================
-def map_category(title):
-    t = title.lower()
-    if "fabric" in t or "cotton" in t:
-        return "Clothing"
-    elif "shoe" in t:
-        return "Footwear"
-    elif "watch" in t:
-        return "Watches"
-    return "General"
-
 # ================= DESCRIPTION =================
-def format_description(title):
-    return f"""
+def format_description(title, brand=""):
+    desc = f"""
 {title}
 
 Product Overview:
-Premium quality product designed for performance durability and style.
+Experience premium quality with this carefully selected product designed for durability performance and style.
 
 Key Features:
 • High quality construction
 • Reliable performance
 • Long lasting usage
-• Excellent value
+• Excellent value for money
+• Designed for everyday use
+
+Why Choose This Product:
+• Carefully sourced product
+• Trusted quality assurance
+• Suitable for multiple use cases
 
 Condition:
 Brand New
 
 Shipping:
 Fast and secure delivery.
-""".strip()
 
-# ================= EBAY =================
+"""
+    if brand:
+        desc += f"\nBrand: {brand}"
+
+    return desc.strip()
+
+# ================= CLEAN CATEGORY =================
+def clean_category(cat):
+    if not cat:
+        return "General"
+    return cat.split(">")[-1].strip()
+
+# ================= EBAY FETCH =================
 def get_ebay_data(url, token):
     try:
         match = re.search(r"/itm/(\d+)", url)
@@ -107,18 +113,23 @@ def get_ebay_data(url, token):
         title = data.get("title", "")
         image = data.get("image", {}).get("imageUrl", "")
 
-        additional = [
+        additional_images = [
             img["imageUrl"]
             for img in data.get("additionalImages", [])
             if img.get("imageUrl")
         ]
 
+        category = data.get("categoryPath", "")
+
         stock = 5
+
+        print(f"eBay → {title}")
 
         return stock, price, {
             "title": title,
             "image": image,
-            "additional": additional
+            "additional": additional_images,
+            "category": category
         }
 
     except Exception as e:
@@ -136,26 +147,28 @@ for idx, row in enumerate(data):
     if "ebay." not in url:
         continue
 
-    stock, cost, extra = get_ebay_data(url, token)
+    stock, cost_price, extra = get_ebay_data(url, token)
 
-    if not cost:
+    if not cost_price or not extra:
         continue
 
-    # ================= AUTO FILL =================
+    # ================= AUTO DATA =================
     title = extra.get("title", "")
     image = extra.get("image", "")
     additional = ", ".join(extra.get("additional", []))
-    category = map_category(title)
-    description = format_description(title)
+    category = clean_category(extra.get("category"))
+
+    brand = row.get("Brand") or ""
+    description = format_description(title, brand)
 
     # ================= PRICE =================
-    min_price = (cost * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
+    min_price = (cost_price * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
     final_price = round(min_price) - 0.01
 
     # ================= UPDATE SHEET =================
     sheet.update(
         range_name=f"B{i}:E{i}",
-        values=[[title, description, "", category]]
+        values=[[title, description, brand, category]]
     )
 
     sheet.update(
@@ -166,7 +179,7 @@ for idx, row in enumerate(data):
     sheet.update(
         range_name=f"H{i}:O{i}",
         values=[[
-            float(cost),
+            float(cost_price),
             "", "", "",
             int(stock),
             float(final_price),
@@ -183,6 +196,8 @@ for idx, row in enumerate(data):
     ET.SubElement(product, "sku").text = str(row.get("SKU"))
     ET.SubElement(product, "name").text = title
     ET.SubElement(product, "description").text = description
+    ET.SubElement(product, "brand").text = brand
+    ET.SubElement(product, "category").text = category
     ET.SubElement(product, "price").text = str(final_price)
     ET.SubElement(product, "quantity").text = str(stock)
     ET.SubElement(product, "image").text = image
@@ -190,9 +205,11 @@ for idx, row in enumerate(data):
     for img in extra.get("additional", []):
         ET.SubElement(product, "additional_image").text = img
 
+    ET.SubElement(product, "condition").text = "new"
+
     time.sleep(0.3)
 
 # ================= SAVE =================
 ET.ElementTree(root).write("feed.xml", encoding="utf-8", xml_declaration=True)
 
-print("\n✅ TEST RUN COMPLETE")
+print("\n✅ TEST RUN COMPLETE — ALL ROWS PROCESSED")
