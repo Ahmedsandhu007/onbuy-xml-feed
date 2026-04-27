@@ -14,14 +14,8 @@ import base64
 EBAY_CLIENT_ID = os.getenv("EBAY_CLIENT_ID")
 EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 
-ONBUY_CONSUMER_KEY = os.getenv("ONBUY_CONSUMER_KEY")
-ONBUY_SECRET_KEY = os.getenv("ONBUY_SECRET_KEY")
-
 MIN_PROFIT = 0.15
 PLATFORM_FEE = 0.18
-
-TOTAL_BATCHES = 5
-DAILY_API_LIMIT = 4800
 
 PK_TZ = ZoneInfo("Asia/Karachi")
 
@@ -58,12 +52,44 @@ def get_ebay_token():
 
     return res.json().get("access_token")
 
+# ================= CATEGORY =================
+def map_category(title):
+    t = title.lower()
+    if "fabric" in t or "cotton" in t:
+        return "Clothing"
+    elif "shoe" in t:
+        return "Footwear"
+    elif "watch" in t:
+        return "Watches"
+    return "General"
+
+# ================= DESCRIPTION =================
+def format_description(title):
+    return f"""
+{title}
+
+Product Overview:
+Premium quality product designed for performance durability and style.
+
+Key Features:
+• High quality construction
+• Reliable performance
+• Long lasting usage
+• Excellent value
+
+Condition:
+Brand New
+
+Shipping:
+Fast and secure delivery.
+""".strip()
+
 # ================= EBAY =================
 def get_ebay_data(url, token):
     try:
         match = re.search(r"/itm/(\d+)", url)
         if not match:
-            return None, None
+            return None, None, None
 
         item_id = match.group(1)
 
@@ -78,124 +104,95 @@ def get_ebay_data(url, token):
         data = res.json()
 
         price = float(data.get("price", {}).get("value", 0))
+        title = data.get("title", "")
+        image = data.get("image", {}).get("imageUrl", "")
 
-        stock = 0
-        avail = data.get("estimatedAvailabilities", [])
-        if avail and avail[0].get("estimatedAvailabilityStatus") == "IN_STOCK":
-            stock = avail[0].get("estimatedAvailableQuantity", 5)
+        additional = [
+            img["imageUrl"]
+            for img in data.get("additionalImages", [])
+            if img.get("imageUrl")
+        ]
 
-        print(f"eBay → Stock: {stock}, Price: {price}")
-        return stock, price
+        stock = 5
+
+        return stock, price, {
+            "title": title,
+            "image": image,
+            "additional": additional
+        }
 
     except Exception as e:
         print("eBay error:", e)
-        return None, None
-
-# ================= ONBUY =================
-def update_onbuy_product(sku, price, quantity):
-    try:
-        url = "https://api.onbuy.com/v2/products/update"
-
-        headers = {
-            "Authorization": "Basic " + base64.b64encode(
-                f"{ONBUY_CONSUMER_KEY}:{ONBUY_SECRET_KEY}".encode()
-            ).decode(),
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "products": [
-                {
-                    "sku": str(sku),
-                    "price": float(price),
-                    "quantity": int(quantity)
-                }
-            ]
-        }
-
-        res = requests.post(url, json=payload, headers=headers)
-        print(f"OnBuy → {sku} → {res.status_code}")
-
-    except Exception as e:
-        print("OnBuy error:", e)
-
-# ================= INIT =================
-root = ET.Element("products")
-ebay_token = get_ebay_token()
-
-api_calls = 0
-
-#BATCH CONTROL
-current_hour = datetime.now(PK_TZ).hour
-batch_index = current_hour % TOTAL_BATCHES
+        return None, None, None
 
 # ================= MAIN =================
+root = ET.Element("products")
+token = get_ebay_token()
+
 for idx, row in enumerate(data):
-
-    #BATCH FILTER
-    if idx % TOTAL_BATCHES != batch_index:
-        continue
-
     i = idx + 2
 
-    if api_calls >= DAILY_API_LIMIT:
-        break
-
     url = str(row.get("Supplier URL", "")).lower()
-
     if "ebay." not in url:
         continue
 
-    stock, cost_price = get_ebay_data(url, ebay_token)
-    api_calls += 1
+    stock, cost, extra = get_ebay_data(url, token)
 
-    if not cost_price:
+    if not cost:
         continue
 
-    # ================= PRICING =================
-    raw_price = row.get("Selling Price (£)")
+    # ================= AUTO FILL =================
+    title = extra.get("title", "")
+    image = extra.get("image", "")
+    additional = ", ".join(extra.get("additional", []))
+    category = map_category(title)
+    description = format_description(title)
 
-    try:
-        clean = re.sub(r"[^\d.]", "", str(raw_price))
-        current_price = float(clean) if clean else 0
-    except:
-        current_price = 0
+    # ================= PRICE =================
+    min_price = (cost * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
+    final_price = round(min_price) - 0.01
 
-    min_price = (cost_price * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
+    # ================= UPDATE SHEET =================
+    sheet.update(
+        range_name=f"B{i}:E{i}",
+        values=[[title, description, "", category]]
+    )
 
-    if current_price > 0 and current_price >= min_price:
-        final_price = current_price
-    else:
-        final_price = min_price
-
-    final_price = round(final_price) - 0.01
-
-    # ================= UPDATE =================
-    status = "ACTIVE" if stock > 0 else "INACTIVE"
-    now_pk = datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    sheet.update(
+        range_name=f"Q{i}:R{i}",
+        values=[[image, additional]]
+    )
 
     sheet.update(
         range_name=f"H{i}:O{i}",
         values=[[
-            float(cost_price),
+            float(cost),
             "", "", "",
             int(stock),
             float(final_price),
-            status,
-            now_pk
+            "ACTIVE",
+            datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
         ]]
     )
 
-    update_onbuy_product(
-        sku=row.get("SKU"),
-        price=final_price,
-        quantity=stock
-    )
+    print(f"{i} → FILLED")
 
-    print(f"{i} | £{cost_price} → £{final_price} | Stock: {stock}")
+    # ================= XML =================
+    product = ET.SubElement(root, "product")
 
-    time.sleep(0.5)
+    ET.SubElement(product, "sku").text = str(row.get("SKU"))
+    ET.SubElement(product, "name").text = title
+    ET.SubElement(product, "description").text = description
+    ET.SubElement(product, "price").text = str(final_price)
+    ET.SubElement(product, "quantity").text = str(stock)
+    ET.SubElement(product, "image").text = image
 
+    for img in extra.get("additional", []):
+        ET.SubElement(product, "additional_image").text = img
+
+    time.sleep(0.3)
+
+# ================= SAVE =================
 ET.ElementTree(root).write("feed.xml", encoding="utf-8", xml_declaration=True)
 
-print(f"DONE | API CALLS USED: {api_calls}")
+print("\n✅ TEST RUN COMPLETE")
