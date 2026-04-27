@@ -22,7 +22,7 @@ MIN_PROFIT = 0.15   # 15% minimum
 PLATFORM_FEE = 0.18 # 18% fee
 
 TOTAL_BATCHES = 5
-SKIP_HOURS = 6
+SKIP_HOURS = 0
 DAILY_API_LIMIT = 4800
 
 PK_TZ = ZoneInfo("Asia/Karachi")
