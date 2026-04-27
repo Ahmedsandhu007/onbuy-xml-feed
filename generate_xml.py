@@ -7,7 +7,6 @@ import time
 import json
 import os
 import re
-import random
 import xml.etree.ElementTree as ET
 import base64
 
@@ -21,10 +20,7 @@ ONBUY_SECRET_KEY = os.getenv("ONBUY_SECRET_KEY")
 MIN_PROFIT = 0.15
 PLATFORM_FEE = 0.18
 
-TOTAL_BATCHES = 5
-SKIP_HOURS = 6
 DAILY_API_LIMIT = 4800
-
 PK_TZ = ZoneInfo("Asia/Karachi")
 
 # ================= GOOGLE SHEET =================
@@ -126,14 +122,9 @@ root = ET.Element("products")
 ebay_token = get_ebay_token()
 
 api_calls = 0
-current_hour = datetime.now(PK_TZ).hour
-batch_index = current_hour % TOTAL_BATCHES
 
 # ================= MAIN =================
 for idx, row in enumerate(data):
-
-    if idx % TOTAL_BATCHES != batch_index:
-        continue
 
     i = idx + 2
 
@@ -151,8 +142,7 @@ for idx, row in enumerate(data):
     if not cost_price:
         continue
 
-    # ================= FIXED PRICING (FINAL) =================
-
+    # ================= PRICING =================
     raw_price = row.get("Selling Price (£)")
 
     try:
@@ -186,20 +176,11 @@ for idx, row in enumerate(data):
         ]]
     )
 
-    sheet.update(range_name=f"T{i}", values=[[now_pk]])
-
     update_onbuy_product(
         sku=row.get("SKU"),
         price=final_price,
         quantity=stock
     )
-
-    # ================= XML =================
-    if status == "ACTIVE":
-        product = ET.SubElement(root, "product")
-        ET.SubElement(product, "sku").text = str(row.get("SKU", ""))
-        ET.SubElement(product, "price").text = str(final_price)
-        ET.SubElement(product, "quantity").text = str(stock)
 
     print(f"{i} | £{cost_price} → £{final_price} | Stock: {stock}")
 
