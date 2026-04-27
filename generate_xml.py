@@ -58,7 +58,7 @@ def format_description(title, brand=""):
 {title}
 
 Product Overview:
-Experience premium quality with this carefully selected product designed for durability performance and style.
+Premium quality product designed for durability performance and style.
 
 Key Features:
 • High quality construction
@@ -77,14 +77,12 @@ Brand New
 
 Shipping:
 Fast and secure delivery.
-
 """
     if brand:
         desc += f"\nBrand: {brand}"
-
     return desc.strip()
 
-# ================= CLEAN CATEGORY =================
+# ================= CATEGORY =================
 def clean_category(cat):
     if not cat:
         return "General"
@@ -121,9 +119,18 @@ def get_ebay_data(url, token):
 
         category = data.get("categoryPath", "")
 
-        stock = 5
+        # ✅ FIXED STOCK LOGIC
+        stock = 0
+        avail = data.get("estimatedAvailabilities", [])
 
-        print(f"eBay → {title}")
+        if avail:
+            status = avail[0].get("estimatedAvailabilityStatus")
+            if status == "IN_STOCK":
+                stock = avail[0].get("estimatedAvailableQuantity", 5)
+            else:
+                stock = 0
+
+        print(f"eBay → {title} | Stock: {stock}")
 
         return stock, price, {
             "title": title,
@@ -158,7 +165,15 @@ for idx, row in enumerate(data):
     additional = ", ".join(extra.get("additional", []))
     category = clean_category(extra.get("category"))
 
-    brand = row.get("Brand") or ""
+    # ✅ FIXED BRAND LOGIC
+    brand = row.get("Brand")
+
+    if not brand:
+        words = title.split()
+        brand = words[0] if words else "Unbranded"
+
+    brand = brand.strip() if brand else "Unbranded"
+
     description = format_description(title, brand)
 
     # ================= PRICE =================
@@ -183,7 +198,7 @@ for idx, row in enumerate(data):
             "", "", "",
             int(stock),
             float(final_price),
-            "ACTIVE",
+            "ACTIVE" if stock > 0 else "INACTIVE",
             datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
         ]]
     )
