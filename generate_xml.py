@@ -47,6 +47,15 @@ def clean_category(cat):
         return "General"
     return cat.split(">")[-1].strip()
 
+# 🔥 EAN FIX
+def get_ean(sku):
+    sku = str(sku).strip()
+
+    if sku.isdigit() and len(sku) >= 12:
+        return sku[:13]
+
+    return "950" + str(abs(hash(sku)))[:10]
+
 # ================= EBAY TOKEN =================
 def get_ebay_token():
     encoded = base64.b64encode(
@@ -89,16 +98,8 @@ def get_ebay_data(url, token):
         price = float(data.get("price", {}).get("value", 0))
         title = data.get("title", "")
         image = data.get("image", {}).get("imageUrl", "")
-
-        additional_images = [
-            img["imageUrl"]
-            for img in data.get("additionalImages", [])
-            if img.get("imageUrl")
-        ]
-
         category = data.get("categoryPath", "")
 
-        # BRAND
         brand = None
         if data.get("brand"):
             brand = data.get("brand")
@@ -112,19 +113,15 @@ def get_ebay_data(url, token):
         if not brand:
             brand = "Unbranded"
 
-        # STOCK
         stock = 0
         avail = data.get("estimatedAvailabilities", [])
-
         if avail:
-            status = avail[0].get("estimatedAvailabilityStatus")
-            if status == "IN_STOCK":
+            if avail[0].get("estimatedAvailabilityStatus") == "IN_STOCK":
                 stock = avail[0].get("estimatedAvailableQuantity", 5)
 
         return stock, price, {
             "title": title,
             "image": image,
-            "additional": additional_images,
             "category": category,
             "brand": brand
         }
@@ -138,11 +135,10 @@ root = ET.Element("products")
 token = get_ebay_token()
 
 api_calls = 0
-
 current_hour = datetime.now(PK_TZ).hour
 batch_index = current_hour % TOTAL_BATCHES
 
-# ================= MAIN =================
+# ================= MAIN (BATCHED SHEET UPDATE) =================
 for idx, row in enumerate(data):
 
     if idx % TOTAL_BATCHES != batch_index:
@@ -165,38 +161,25 @@ for idx, row in enumerate(data):
 
     title = extra["title"]
     image = extra["image"]
-    additional = ", ".join(extra["additional"])
     category = clean_category(extra["category"])
     brand = extra["brand"]
 
-    raw_desc = row.get("Description")
-    description = re.sub(r"<.*?>", "", str(raw_desc or "")).strip()
+    description = re.sub(r"<.*?>", "", str(row.get("Description") or "")).strip()
 
     min_price = (cost_price * (1 + MIN_PROFIT)) / (1 - PLATFORM_FEE)
     final_price = round(min_price) - 0.01
 
-    # ===== EXISTING VALUES =====
-    old_title = row.get("Title")
-    old_brand = row.get("Brand")
-    old_category = row.get("Category")
-    old_image = row.get("Image URL")
-    old_price = row.get("Selling Price (£)")
-    old_stock = row.get("Stock")
-
     changed = (
-        is_changed(old_title, title) or
-        is_changed(old_brand, brand) or
-        is_changed(old_category, category) or
-        is_changed(old_image, image) or
-        is_changed(old_price, final_price) or
-        is_changed(old_stock, stock)
+        is_changed(row.get("Title"), title) or
+        is_changed(row.get("Brand"), brand) or
+        is_changed(row.get("Category"), category) or
+        is_changed(row.get("Image URL"), image) or
+        is_changed(row.get("Selling Price (£)"), final_price) or
+        is_changed(row.get("Stock"), stock)
     )
 
     if changed:
-
         sheet.update(f"B{i}:E{i}", [[title, description, brand, category]])
-        sheet.update(f"Q{i}:R{i}", [[image, additional]])
-
         sheet.update(f"H{i}:O{i}", [[
             float(cost_price),
             "", "", "",
@@ -205,37 +188,55 @@ for idx, row in enumerate(data):
             "ACTIVE" if stock > 0 else "INACTIVE",
             datetime.now(PK_TZ).strftime("%Y-%m-%d %H:%M:%S")
         ]])
-
         print(f"{i} updated")
-
     else:
         print(f"{i} skipped")
 
     time.sleep(0.4)
 
-# ================= XML =================
+# ================= XML (ONBUY CREATE FEED) =================
 for row in data:
     try:
+        sku = str(row.get("SKU")).strip()
+        title = str(row.get("Title")).strip()[:150]
+        desc = str(row.get("Description")).strip()
+        image = str(row.get("Image URL")).strip()
+        brand = str(row.get("Brand") or "Unbranded").strip()
+        category = str(row.get("Category")).strip()
         price = float(re.sub(r"[^\d.]", "", str(row.get("Selling Price (£)", 0)) or "0"))
         stock = int(row.get("Stock") or 0)
+
+        condition = str(row.get("Condition") or "new").lower()
+        ean = get_ean(sku)
+
+        # 🔥 STRICT FILTER
+        if not all([sku, title, desc, image, brand, category, ean]):
+            continue
+
+        if any(bad in image.lower() for bad in ["imgur", "alicdn", "fruugo"]):
+            continue
 
         if price <= 0:
             continue
 
         product = ET.SubElement(root, "product")
 
-        ET.SubElement(product, "sku").text = str(row.get("SKU"))
-        ET.SubElement(product, "name").text = str(row.get("Title"))
-        ET.SubElement(product, "description").text = str(row.get("Description"))
-        ET.SubElement(product, "brand").text = str(row.get("Brand") or "Unbranded")
-        ET.SubElement(product, "category").text = str(row.get("Category"))
+        ET.SubElement(product, "sku").text = sku
+        ET.SubElement(product, "name").text = title
+        ET.SubElement(product, "description").text = desc
+        ET.SubElement(product, "image").text = image
+        ET.SubElement(product, "brand").text = brand
+        ET.SubElement(product, "category").text = category
+        ET.SubElement(product, "ean").text = ean
+        ET.SubElement(product, "condition").text = condition
         ET.SubElement(product, "price").text = str(price)
         ET.SubElement(product, "quantity").text = str(stock)
-        ET.SubElement(product, "image").text = str(row.get("Image URL"))
 
-    except:
+    except Exception as e:
+        print("Skipped row:", e)
         continue
 
+# ================= SAVE =================
 ET.ElementTree(root).write("feed.xml", encoding="utf-8", xml_declaration=True)
 
-print(f"\nDONE | API CALLS USED: {api_calls}")
+print(f"\n✅ DONE | API CALLS USED: {api_calls}")
