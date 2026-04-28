@@ -42,19 +42,54 @@ def is_changed(old, new):
     except:
         return True
 
-def clean_category(cat):
-    if not cat:
-        return "General"
-    return cat.split(">")[-1].strip()
+# ================= CATEGORY MAP =================
+CATEGORY_MAP = {
+    "Speakers & Subwoofers": "Speakers",
+    "TVs": "Televisions",
+    "DVD & Blu-ray Players": "DVD Players",
+    "Espresso & Cappuccino Machines": "Coffee Machines",
+    "Juicers & Presses": "Juicers",
+    "Power Tool Batteries": "Power Tool Accessories",
+    "Transmitters": "Car Accessories",
+    "Audio Cables & Adapters": "Audio Accessories",
+    "Washing Lines": "Laundry Accessories",
+    "Drain Stoppers & Strainers": "Bathroom Accessories",
+    "Wall Hooks & Door Hangers": "Storage & Organisation",
+    "Saddle Covers": "Cycling Accessories",
+    "Handlebar Grips, Tape & Pads": "Cycling Accessories",
+    "Insect Nets": "Camping Accessories",
+    "Umbrellas": "Accessories",
+    "Women's Bags & Handbags": "Bags",
+    "Underwear": "Clothing",
+    "Knickers": "Clothing",
+    "default": "Other"
+}
 
-# 🔥 EAN FIX
-def get_ean(sku):
-    sku = str(sku).strip()
+def map_category(raw_cat):
+    if not raw_cat:
+        return "Other"
+    clean = re.sub(r"\s+", " ", str(raw_cat)).strip()
+    last = clean.split("|")[-1].strip()
+    return CATEGORY_MAP.get(last, CATEGORY_MAP["default"])
 
-    if sku.isdigit() and len(sku) >= 12:
-        return sku[:13]
+# ================= IMAGE FIX =================
+def to_jpg(url):
+    if not url:
+        return ""
+    url = re.sub(r"\.webp.*$", ".jpg", url)
+    url = re.sub(r"\.(png|jpeg).*?$", ".jpg", url)
+    return url
 
-    return "950" + str(abs(hash(sku)))[:10]
+def clean_additional_images(images):
+    if not images:
+        return ""
+    imgs = [to_jpg(i.strip()) for i in str(images).split(",") if i.strip()]
+    return ",".join(imgs[:5])
+
+# ================= EAN =================
+def get_ean(sku, idx):
+    base = str(abs(hash(sku + str(idx))))
+    return "950" + base[:10]
 
 # ================= EBAY TOKEN =================
 def get_ebay_token():
@@ -99,25 +134,12 @@ def get_ebay_data(url, token):
         title = data.get("title", "")
         image = data.get("image", {}).get("imageUrl", "")
         category = data.get("categoryPath", "")
-
-        brand = None
-        if data.get("brand"):
-            brand = data.get("brand")
-
-        if not brand:
-            for aspect in data.get("localizedAspects", []):
-                if aspect.get("name", "").lower() == "brand":
-                    brand = aspect.get("value")
-                    break
-
-        if not brand:
-            brand = "Unbranded"
+        brand = data.get("brand") or "Unbranded"
 
         stock = 0
         avail = data.get("estimatedAvailabilities", [])
-        if avail:
-            if avail[0].get("estimatedAvailabilityStatus") == "IN_STOCK":
-                stock = avail[0].get("estimatedAvailableQuantity", 5)
+        if avail and avail[0].get("estimatedAvailabilityStatus") == "IN_STOCK":
+            stock = avail[0].get("estimatedAvailableQuantity", 5)
 
         return stock, price, {
             "title": title,
@@ -138,7 +160,7 @@ api_calls = 0
 current_hour = datetime.now(PK_TZ).hour
 batch_index = current_hour % TOTAL_BATCHES
 
-# ================= MAIN (BATCHED SHEET UPDATE) =================
+# ================= MAIN (BATCHED UPDATES) =================
 for idx, row in enumerate(data):
 
     if idx % TOTAL_BATCHES != batch_index:
@@ -161,7 +183,7 @@ for idx, row in enumerate(data):
 
     title = extra["title"]
     image = extra["image"]
-    category = clean_category(extra["category"])
+    category = map_category(extra["category"])
     brand = extra["brand"]
 
     description = re.sub(r"<.*?>", "", str(row.get("Description") or "")).strip()
@@ -194,37 +216,44 @@ for idx, row in enumerate(data):
 
     time.sleep(0.4)
 
-# ================= XML (ONBUY CREATE FEED) =================
-for row in data:
+# ================= XML CREATE FEED =================
+for idx, row in enumerate(data):
     try:
         sku = str(row.get("SKU")).strip()
         title = str(row.get("Title")).strip()[:150]
         desc = str(row.get("Description")).strip()
-        image = str(row.get("Image URL")).strip()
+
+        main_image = to_jpg(str(row.get("Image URL")).strip())
+        additional_images = clean_additional_images(row.get("Additional Images"))
+
         brand = str(row.get("Brand") or "Unbranded").strip()
-        category = str(row.get("Category")).strip()
+        category = map_category(row.get("Category"))
+
         price = float(re.sub(r"[^\d.]", "", str(row.get("Selling Price (£)", 0)) or "0"))
         stock = int(row.get("Stock") or 0)
 
-        condition = str(row.get("Condition") or "new").lower()
-        ean = get_ean(sku)
+        condition = "New"
+        ean = get_ean(sku, idx)
 
-        # 🔥 STRICT FILTER
-        if not all([sku, title, desc, image, brand, category, ean]):
+        if not all([sku, title, desc, main_image, brand, category, ean]):
             continue
 
-        if any(bad in image.lower() for bad in ["imgur", "alicdn", "fruugo"]):
+        if any(bad in main_image.lower() for bad in ["imgur", "alicdn", "fruugo"]):
             continue
 
-        if price <= 0:
+        if price <= 0 or stock <= 0:
             continue
 
         product = ET.SubElement(root, "product")
 
         ET.SubElement(product, "sku").text = sku
-        ET.SubElement(product, "name").text = title
+        ET.SubElement(product, "product_name").text = title
         ET.SubElement(product, "description").text = desc
-        ET.SubElement(product, "image").text = image
+        ET.SubElement(product, "image_url").text = main_image
+
+        if additional_images:
+            ET.SubElement(product, "additional_image_urls").text = additional_images
+
         ET.SubElement(product, "brand").text = brand
         ET.SubElement(product, "category").text = category
         ET.SubElement(product, "ean").text = ean
