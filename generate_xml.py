@@ -291,6 +291,8 @@ print("\n🔄 Updating OnBuy Categories...")
 
 category_updates = 0
 
+bulk_category_updates = []
+
 for idx, row in enumerate(data):
 
     i = idx + 2
@@ -315,20 +317,23 @@ for idx, row in enumerate(data):
 
     if mapped_category != current_category:
 
-        sheet.batch_update([
-            {
-                "range": f"{col_letter(col_map['Category'])}{i}",
-                "values": [[mapped_category]]
-            }
-        ])
+        bulk_category_updates.append({
+            "range": f"{col_letter(col_map['Category'])}{i}",
+            "values": [[mapped_category]]
+        })
 
         category_updates += 1
 
         print(
-            f"Updated category row {i}"
+            f"Prepared category row {i}"
         )
 
-        time.sleep(0.2)
+# 🔥 SINGLE BULK UPDATE
+if bulk_category_updates:
+
+    sheet.batch_update(
+        bulk_category_updates
+    )
 
 print(
     f"\n✅ Categories Updated: "
