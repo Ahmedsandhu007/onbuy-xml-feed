@@ -10,13 +10,13 @@ import re
 import xml.etree.ElementTree as ET
 import base64
 import math
-import pandas as pd
+import csv
 
 # ================= CONFIG =================
 EBAY_CLIENT_ID = os.getenv("EBAY_CLIENT_ID")
 EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 
-FULL_REFRESH = True
+FULL_REFRESH = False
 
 MAX_PRODUCTS_PER_RUN = 8
 RUNS_PER_DAY = 24
@@ -29,7 +29,9 @@ scope = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-creds_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
+creds_dict = json.loads(
+    os.environ["GOOGLE_CREDENTIALS"]
+)
 
 creds = ServiceAccountCredentials.from_json_keyfile_dict(
     creds_dict,
@@ -38,7 +40,9 @@ creds = ServiceAccountCredentials.from_json_keyfile_dict(
 
 client = gspread.authorize(creds)
 
-sheet = client.open("OnBuy_Feed_Master").sheet1
+sheet = client.open(
+    "OnBuy_Feed_Master"
+).sheet1
 
 data = sheet.get_all_records()
 
@@ -52,25 +56,52 @@ col_map = {
 print(f"📊 TOTAL ROWS IN SHEET: {len(data)}")
 
 # ================= ONBUY CATEGORY DATA =================
-taxonomy_df = pd.read_csv("onbuy_categories_only.csv")
+ONBUY_CATEGORIES = []
 
-ONBUY_CATEGORIES = taxonomy_df[
-    "OnBuy Category Path"
-].dropna().tolist()
+with open(
+    "onbuy_categories_only.csv",
+    newline='',
+    encoding='utf-8'
+) as csvfile:
 
-print(f"📂 Loaded {len(ONBUY_CATEGORIES)} OnBuy categories")
+    reader = csv.DictReader(csvfile)
+
+    for row in reader:
+
+        category = row.get(
+            "OnBuy Category Path"
+        )
+
+        if category:
+            ONBUY_CATEGORIES.append(category)
+
+print(
+    f"📂 Loaded {len(ONBUY_CATEGORIES)} "
+    f"OnBuy categories"
+)
 
 # ================= HELPERS =================
 def to_jpg(url):
+
     if not url:
         return ""
 
-    url = re.sub(r"\.webp.*$", ".jpg", url)
-    url = re.sub(r"\.(png|jpeg).*?$", ".jpg", url)
+    url = re.sub(
+        r"\.webp.*$",
+        ".jpg",
+        url
+    )
+
+    url = re.sub(
+        r"\.(png|jpeg).*?$",
+        ".jpg",
+        url
+    )
 
     return url
 
 def clean_additional_images(images):
+
     if not images:
         return ""
 
@@ -83,25 +114,40 @@ def clean_additional_images(images):
     return ",".join(imgs[:5])
 
 def clean_category(cat):
+
     if not cat:
         return ""
 
-    cat = str(cat).replace("\n", " ").strip()
+    cat = str(cat).replace(
+        "\n",
+        " "
+    ).strip()
 
     if "|" in cat:
         cat = cat.split("|")[-1]
 
-    cat = re.sub(r"\s+", " ", cat).strip()
+    cat = re.sub(
+        r"\s+",
+        " ",
+        cat
+    ).strip()
 
     return cat
 
 def is_different(old, new):
+
     try:
         return float(old) != float(new)
+
     except:
-        return str(old).strip() != str(new).strip()
+        return (
+            str(old).strip()
+            !=
+            str(new).strip()
+        )
 
 def col_letter(n):
+
     result = ""
 
     while n:
@@ -112,11 +158,19 @@ def col_letter(n):
 
 # ================= CATEGORY MATCHER =================
 def tokenize(text):
+
     return set(
-        re.findall(r'\w+', str(text).lower())
+        re.findall(
+            r'\w+',
+            str(text).lower()
+        )
     )
 
-def map_onbuy_category(title, current_category, description=""):
+def map_onbuy_category(
+    title,
+    current_category,
+    description=""
+):
 
     product_text = f"""
     {title}
@@ -131,18 +185,23 @@ def map_onbuy_category(title, current_category, description=""):
 
     for category_path in ONBUY_CATEGORIES:
 
-        category_words = tokenize(category_path)
-
-        score = len(
-            product_words.intersection(category_words)
+        category_words = tokenize(
+            category_path
         )
 
-        # bonus matching
+        score = len(
+            product_words.intersection(
+                category_words
+            )
+        )
+
         for word in product_words:
+
             if word in category_path.lower():
                 score += 2
 
         if score > best_score:
+
             best_score = score
             best_match = category_path
 
@@ -170,13 +229,18 @@ def get_ebay_token():
         }
     )
 
-    return res.json().get("access_token")
+    return res.json().get(
+        "access_token"
+    )
 
 def get_ebay_data(url, token):
 
     try:
 
-        match = re.search(r"/itm/(\d+)", url)
+        match = re.search(
+            r"/itm/(\d+)",
+            url
+        )
 
         if not match:
             return None, None
@@ -194,7 +258,13 @@ def get_ebay_data(url, token):
         data = res.json()
 
         price = float(
-            data.get("price", {}).get("value", 0)
+            data.get(
+                "price",
+                {}
+            ).get(
+                "value",
+                0
+            )
         )
 
         stock = 0
@@ -205,6 +275,7 @@ def get_ebay_data(url, token):
         )
 
         if avail:
+
             stock = avail[0].get(
                 "estimatedAvailableQuantity",
                 5
@@ -224,9 +295,17 @@ for idx, row in enumerate(data):
 
     i = idx + 2
 
-    title = str(row.get("Title") or "")
-    current_category = str(row.get("Category") or "")
-    description = str(row.get("Description") or "")
+    title = str(
+        row.get("Title") or ""
+    )
+
+    current_category = str(
+        row.get("Category") or ""
+    )
+
+    description = str(
+        row.get("Description") or ""
+    )
 
     mapped_category = map_onbuy_category(
         title,
@@ -245,11 +324,16 @@ for idx, row in enumerate(data):
 
         category_updates += 1
 
-        print(f"Updated category row {i}")
+        print(
+            f"Updated category row {i}"
+        )
 
         time.sleep(0.2)
 
-print(f"\n✅ Categories Updated: {category_updates}")
+print(
+    f"\n✅ Categories Updated: "
+    f"{category_updates}"
+)
 
 # ================= DYNAMIC BATCH =================
 total_products = len(data)
@@ -263,9 +347,13 @@ TOTAL_BATCHES = min(
     RUNS_PER_DAY
 )
 
-current_hour = datetime.now(PK_TZ).hour
+current_hour = datetime.now(
+    PK_TZ
+).hour
 
-batch_index = current_hour % TOTAL_BATCHES
+batch_index = (
+    current_hour % TOTAL_BATCHES
+)
 
 batch_size = math.ceil(
     total_products / TOTAL_BATCHES
@@ -279,7 +367,8 @@ end = min(
 )
 
 print(
-    f"🔁 Batch {batch_index+1}/{TOTAL_BATCHES} | "
+    f"🔁 Batch {batch_index+1}/"
+    f"{TOTAL_BATCHES} | "
     f"Processing rows {start} → {end}"
 )
 
@@ -310,23 +399,50 @@ for idx in range(start, end):
     if not cost_price:
         continue
 
-    final_price = round(cost_price * 1.4, 2)
+    final_price = round(
+        cost_price * 1.4,
+        2
+    )
 
-    old_cost = row.get("Cost Price (£)") or 0
-    old_stock = row.get("Stock") or 0
-    old_price = row.get("Selling Price (£)") or 0
+    old_cost = (
+        row.get("Cost Price (£)")
+        or 0
+    )
+
+    old_stock = (
+        row.get("Stock")
+        or 0
+    )
+
+    old_price = (
+        row.get("Selling Price (£)")
+        or 0
+    )
 
     if not FULL_REFRESH:
 
         if not (
-            is_different(old_cost, cost_price)
-            or is_different(old_stock, stock)
-            or is_different(old_price, final_price)
+            is_different(
+                old_cost,
+                cost_price
+            )
+            or
+            is_different(
+                old_stock,
+                stock
+            )
+            or
+            is_different(
+                old_price,
+                final_price
+            )
         ):
 
             skipped_count += 1
 
-            print(f"Skipped row {i}")
+            print(
+                f"Skipped row {i}"
+            )
 
             continue
 
@@ -346,7 +462,9 @@ for idx in range(start, end):
         {
             "range": f"{col_letter(col_map['Status'])}{i}",
             "values": [[
-                "ACTIVE" if stock else "INACTIVE"
+                "ACTIVE"
+                if stock
+                else "INACTIVE"
             ]]
         },
         {
@@ -377,7 +495,9 @@ for idx, row in enumerate(data):
 
     try:
 
-        sku = str(row.get("SKU") or "").strip()
+        sku = str(
+            row.get("SKU") or ""
+        ).strip()
 
         title = str(
             row.get("Title") or ""
@@ -388,7 +508,10 @@ for idx, row in enumerate(data):
         ).strip()
 
         image = to_jpg(
-            str(row.get("Image URL") or "")
+            str(
+                row.get("Image URL")
+                or ""
+            )
         )
 
         brand = str(
@@ -404,8 +527,9 @@ for idx, row in enumerate(data):
                 r"[^\d.]",
                 "",
                 str(
-                    row.get("Selling Price (£)")
-                    or "0"
+                    row.get(
+                        "Selling Price (£)"
+                    ) or "0"
                 )
             ) or 0
         )
@@ -431,9 +555,15 @@ for idx, row in enumerate(data):
 
             continue
 
-        p = ET.SubElement(root, "product")
+        p = ET.SubElement(
+            root,
+            "product"
+        )
 
-        ET.SubElement(p, "sku").text = sku
+        ET.SubElement(
+            p,
+            "sku"
+        ).text = sku
 
         ET.SubElement(
             p,
@@ -451,7 +581,9 @@ for idx, row in enumerate(data):
         ).text = image
 
         add_imgs = clean_additional_images(
-            row.get("Additional Images")
+            row.get(
+                "Additional Images"
+            )
         )
 
         if add_imgs:
@@ -504,12 +636,27 @@ ET.ElementTree(root).write(
 
 print("\n✅ DONE")
 
-print(f"📂 Categories Updated: {category_updates}")
+print(
+    f"📂 Categories Updated: "
+    f"{category_updates}"
+)
 
-print(f"📦 Updated rows: {updated_count}")
+print(
+    f"📦 Updated rows: "
+    f"{updated_count}"
+)
 
-print(f"⏭ Skipped updates: {skipped_count}")
+print(
+    f"⏭ Skipped updates: "
+    f"{skipped_count}"
+)
 
-print(f"📦 Feed products: {count}")
+print(
+    f"📦 Feed products: "
+    f"{count}"
+)
 
-print(f"⚠ Skipped in feed: {skipped_xml}")
+print(
+    f"⚠ Skipped in feed: "
+    f"{skipped_xml}"
+)
