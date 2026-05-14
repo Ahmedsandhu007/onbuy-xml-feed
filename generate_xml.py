@@ -16,13 +16,13 @@ EBAY_CLIENT_ID = os.getenv("EBAY_CLIENT_ID")
 EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 
 # 🔥 FULL REFRESH FOR THIS RUN
-FULL_REFRESH = False
+FULL_REFRESH = True
 
 # 🔥 PROCESS ALL PRODUCTS THIS RUN
-MAX_PRODUCTS_PER_RUN = 12
+MAX_PRODUCTS_PER_RUN = 999999
 
-# 🔥 KEEP FALSE TO AVOID REMAPPING AGAIN
-RUN_CATEGORY_MAPPING = True
+# 🔥 KEEP FALSE NORMALLY
+RUN_CATEGORY_MAPPING = False
 
 PK_TZ = ZoneInfo("Asia/Karachi")
 
@@ -261,11 +261,15 @@ def get_ebay_data(url, token):
 
         item_id = match.group(1)
 
+        # ✅ CORRECT LEGACY ENDPOINT
         res = requests.get(
-            f"https://api.ebay.com/buy/browse/v1/item/v1|{item_id}|0",
+            "https://api.ebay.com/buy/browse/v1/item/get_item_by_legacy_id",
             headers={
                 "Authorization": f"Bearer {token}",
                 "X-EBAY-C-MARKETPLACE-ID": "EBAY_GB"
+            },
+            params={
+                "legacy_item_id": item_id
             }
         )
 
@@ -328,7 +332,7 @@ def get_ebay_data(url, token):
             except:
                 price = None
 
-        # 🚨 PARTIAL / BROKEN API RESPONSE
+        # 🚨 PARTIAL API RESPONSE
         if price is None:
 
             print(
@@ -458,7 +462,6 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
     else:
 
         minimum_price = cost_price * 1.15
-
         calculated_price = cost_price * 1.4
 
         final_price = round(
@@ -588,68 +591,27 @@ for idx, row in enumerate(data):
             "product"
         )
 
-        ET.SubElement(
-            p,
-            "sku"
-        ).text = sku
-
-        ET.SubElement(
-            p,
-            "product_name"
-        ).text = title[:150]
-
-        ET.SubElement(
-            p,
-            "description"
-        ).text = desc
-
-        ET.SubElement(
-            p,
-            "image_url"
-        ).text = image
+        ET.SubElement(p, "sku").text = sku
+        ET.SubElement(p, "product_name").text = title[:150]
+        ET.SubElement(p, "description").text = desc
+        ET.SubElement(p, "image_url").text = image
 
         add_imgs = clean_additional_images(
-            row.get(
-                "Additional Images"
-            )
+            row.get("Additional Images")
         )
 
         if add_imgs:
-
             ET.SubElement(
                 p,
                 "additional_image_urls"
             ).text = add_imgs
 
-        ET.SubElement(
-            p,
-            "brand"
-        ).text = brand
-
-        ET.SubElement(
-            p,
-            "category"
-        ).text = category
-
-        ET.SubElement(
-            p,
-            "ean"
-        ).text = sku
-
-        ET.SubElement(
-            p,
-            "condition"
-        ).text = "New"
-
-        ET.SubElement(
-            p,
-            "price"
-        ).text = str(price)
-
-        ET.SubElement(
-            p,
-            "quantity"
-        ).text = str(stock)
+        ET.SubElement(p, "brand").text = brand
+        ET.SubElement(p, "category").text = category
+        ET.SubElement(p, "ean").text = sku
+        ET.SubElement(p, "condition").text = "New"
+        ET.SubElement(p, "price").text = str(price)
+        ET.SubElement(p, "quantity").text = str(stock)
 
         count += 1
 
@@ -664,22 +626,7 @@ ET.ElementTree(root).write(
 
 print("\n✅ DONE")
 
-print(
-    f"📦 Updated rows: "
-    f"{updated_count}"
-)
-
-print(
-    f"⏭ Skipped updates: "
-    f"{skipped_count}"
-)
-
-print(
-    f"📦 Feed products: "
-    f"{count}"
-)
-
-print(
-    f"⚠ Skipped in feed: "
-    f"{skipped_xml}"
-)
+print(f"📦 Updated rows: {updated_count}")
+print(f"⏭ Skipped updates: {skipped_count}")
+print(f"📦 Feed products: {count}")
+print(f"⚠ Skipped in feed: {skipped_xml}")
