@@ -15,13 +15,13 @@ import csv
 EBAY_CLIENT_ID = os.getenv("EBAY_CLIENT_ID")
 EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 
-# 🔥 FULL REFRESH FOR ALL PRODUCTS
+# 🔥 FULL REFRESH FOR THIS RUN
 FULL_REFRESH = True
 
-# ONLY ENABLE MANUALLY WHEN NEEDED
+# 🔥 DISABLE AFTER THIS RUN
 RUN_CATEGORY_MAPPING = False
 
-# 🔥 PROCESS ALL PRODUCTS
+# 🔥 PROCESS ALL PRODUCTS THIS RUN
 MAX_PRODUCTS_PER_RUN = 999999
 
 PK_TZ = ZoneInfo("Asia/Karachi")
@@ -141,18 +141,6 @@ def clean_category(cat):
     ).strip()
 
     return cat
-
-def is_different(old, new):
-
-    try:
-        return float(old) != float(new)
-
-    except:
-        return (
-            str(old).strip()
-            !=
-            str(new).strip()
-        )
 
 def col_letter(n):
 
@@ -283,13 +271,40 @@ def get_ebay_data(url, token):
 
         data = res.json()
 
+        # 🚨 PRICE CHECK
+        price_data = data.get(
+            "price",
+            {}
+        )
+
+        if not price_data:
+
+            print(f"INACTIVE LISTING: {item_id}")
+
+            return 0, 0
+
+        price = float(
+            price_data.get(
+                "value",
+                0
+            )
+        )
+
+        # 🚨 INVALID PRICE
+        if price <= 0:
+
+            print(f"INACTIVE LISTING: {item_id}")
+
+            return 0, 0
+
         estimated = data.get(
             "estimatedAvailabilities",
             []
         )
 
-        availability_status = ""
+        stock = 5
 
+        # IF AVAILABILITY EXISTS → USE IT
         if estimated:
 
             availability_status = estimated[0].get(
@@ -297,34 +312,23 @@ def get_ebay_data(url, token):
                 ""
             )
 
-        # 🚨 TRUE INACTIVE CONDITIONS
-        if (
-            not estimated
-            or
-            availability_status in [
+            if availability_status in [
                 "OUT_OF_STOCK",
                 "UNAVAILABLE"
-            ]
-        ):
+            ]:
 
-            print(f"INACTIVE LISTING: {item_id}")
+                print(f"OUT OF STOCK: {item_id}")
 
-            return 0, 0
+                return 0, 0
 
-        stock = estimated[0].get(
-            "estimatedAvailableQuantity",
-            0
-        )
-
-        price = float(
-            data.get(
-                "price",
-                {}
-            ).get(
-                "value",
-                0
+            stock = estimated[0].get(
+                "estimatedAvailableQuantity",
+                5
             )
-        )
+
+        # FALLBACK STOCK
+        if stock <= 0:
+            stock = 5
 
         return stock, price
 
@@ -409,7 +413,6 @@ print(
 token = get_ebay_token()
 
 updated_count = 0
-skipped_count = 0
 
 for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
 
@@ -560,7 +563,6 @@ for idx, row in enumerate(data):
         ):
 
             skipped_xml += 1
-
             continue
 
         p = ET.SubElement(
@@ -644,21 +646,9 @@ ET.ElementTree(root).write(
 
 print("\n✅ DONE")
 
-if RUN_CATEGORY_MAPPING:
-
-    print(
-        f"📂 Categories Updated: "
-        f"{category_updates}"
-    )
-
 print(
     f"📦 Updated rows: "
     f"{updated_count}"
-)
-
-print(
-    f"⏭ Skipped updates: "
-    f"{skipped_count}"
 )
 
 print(
