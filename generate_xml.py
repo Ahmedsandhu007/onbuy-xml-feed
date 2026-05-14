@@ -16,13 +16,13 @@ EBAY_CLIENT_ID = os.getenv("EBAY_CLIENT_ID")
 EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 
 # 🔥 FULL REFRESH FOR THIS RUN
-FULL_REFRESH =  False
-
-# 🔥 DISABLE AFTER THIS RUN
-RUN_CATEGORY_MAPPING = True
+FULL_REFRESH = True
 
 # 🔥 PROCESS ALL PRODUCTS THIS RUN
-MAX_PRODUCTS_PER_RUN = 12
+MAX_PRODUCTS_PER_RUN = 999999
+
+# 🔥 KEEP FALSE TO AVOID REMAPPING AGAIN
+RUN_CATEGORY_MAPPING = False
 
 PK_TZ = ZoneInfo("Asia/Karachi")
 
@@ -269,42 +269,24 @@ def get_ebay_data(url, token):
             }
         )
 
+        # 🚨 TRUE REMOVED LISTING
+        if res.status_code == 404:
+
+            print(f"REMOVED LISTING: {item_id}")
+
+            return 0, 0
+
         data = res.json()
-
-        # 🚨 PRICE CHECK
-        price_data = data.get(
-            "price",
-            {}
-        )
-
-        if not price_data:
-
-            print(f"INACTIVE LISTING: {item_id}")
-
-            return 0, 0
-
-        price = float(
-            price_data.get(
-                "value",
-                0
-            )
-        )
-
-        # 🚨 INVALID PRICE
-        if price <= 0:
-
-            print(f"INACTIVE LISTING: {item_id}")
-
-            return 0, 0
 
         estimated = data.get(
             "estimatedAvailabilities",
             []
         )
 
-        stock = 5
+        availability_status = ""
 
-        # IF AVAILABILITY EXISTS → USE IT
+        stock = None
+
         if estimated:
 
             availability_status = estimated[0].get(
@@ -312,6 +294,7 @@ def get_ebay_data(url, token):
                 ""
             )
 
+            # 🚨 TRUE OUT OF STOCK
             if availability_status in [
                 "OUT_OF_STOCK",
                 "UNAVAILABLE"
@@ -322,12 +305,40 @@ def get_ebay_data(url, token):
                 return 0, 0
 
             stock = estimated[0].get(
-                "estimatedAvailableQuantity",
-                5
+                "estimatedAvailableQuantity"
             )
 
+        price_data = data.get(
+            "price",
+            {}
+        )
+
+        price = None
+
+        if price_data:
+
+            try:
+                price = float(
+                    price_data.get(
+                        "value",
+                        0
+                    )
+                )
+
+            except:
+                price = None
+
+        # 🚨 PARTIAL / BROKEN API RESPONSE
+        if price is None:
+
+            print(
+                f"PARTIAL API DATA: {item_id}"
+            )
+
+            return None, None
+
         # FALLBACK STOCK
-        if stock <= 0:
+        if not stock or stock <= 0:
             stock = 5
 
         return stock, price
@@ -413,6 +424,7 @@ print(
 token = get_ebay_token()
 
 updated_count = 0
+skipped_count = 0
 
 for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
 
@@ -430,14 +442,20 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
         token
     )
 
+    # 🚨 PARTIAL API RESPONSE
+    if stock is None or cost_price is None:
+
+        skipped_count += 1
+
+        print(f"Skipped row {i}")
+
+        continue
+
     if stock == 0:
 
         final_price = 0
 
     else:
-
-        if not cost_price:
-            continue
 
         minimum_price = cost_price * 1.15
 
@@ -649,6 +667,11 @@ print("\n✅ DONE")
 print(
     f"📦 Updated rows: "
     f"{updated_count}"
+)
+
+print(
+    f"⏭ Skipped updates: "
+    f"{skipped_count}"
 )
 
 print(
