@@ -204,6 +204,19 @@ def trim_html_description(desc, limit=45000):
 
     return desc
 
+# ================= EMPTY RESPONSE =================
+def empty_ebay_response():
+
+    return {
+        "stock": 0,
+        "price": 0,
+        "description": "",
+        "main_image": "",
+        "additional_images": "",
+        "title": "",
+        "brand": ""
+    }
+
 # ================= CATEGORY MAPPING =================
 def map_onbuy_category(
     title,
@@ -272,19 +285,6 @@ def get_ebay_token():
         "access_token"
     )
 
-# ================= EMPTY RESPONSE =================
-def empty_ebay_response():
-
-    return {
-        "stock": 0,
-        "price": 0,
-        "description": "",
-        "main_image": "",
-        "additional_images": "",
-        "title": "",
-        "brand": ""
-    }
-
 # ================= EBAY FETCH =================
 def get_ebay_data(url, token):
 
@@ -296,7 +296,7 @@ def get_ebay_data(url, token):
         )
 
         if not match:
-            return None
+            return empty_ebay_response()
 
         item_id = match.group(1)
 
@@ -334,7 +334,10 @@ def get_ebay_data(url, token):
         )
 
         if price <= 0:
-            return None
+
+            print(f"NO PRICE: {item_id}")
+
+            return empty_ebay_response()
 
         # ================= STOCK =================
         estimated = data.get(
@@ -351,7 +354,6 @@ def get_ebay_data(url, token):
                 ""
             )
 
-            # ================= OUT OF STOCK =================
             if status in [
                 "OUT_OF_STOCK",
                 "UNAVAILABLE"
@@ -461,7 +463,7 @@ def get_ebay_data(url, token):
 
         print(f"eBay fetch error: {e}")
 
-        return None
+        return empty_ebay_response()
 
 # ================= CATEGORY MAPPING =================
 if RUN_CATEGORY_MAPPING:
@@ -529,7 +531,6 @@ print(
 token = get_ebay_token()
 
 updated_count = 0
-skipped_count = 0
 
 for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
 
@@ -546,14 +547,6 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
         url,
         token
     )
-
-    if not ebay_data:
-
-        skipped_count += 1
-
-        print(f"Skipped row {i}")
-
-        continue
 
     stock = ebay_data["stock"]
     cost_price = ebay_data["price"]
@@ -709,8 +702,6 @@ for row in sheet.get_all_records():
         if not all([
             sku,
             title,
-            desc,
-            image,
             category
         ]):
 
@@ -810,6 +801,5 @@ ET.ElementTree(root).write(
 # ================= FINAL LOGS =================
 print("\n✅ DONE")
 print(f"📦 Updated rows: {updated_count}")
-print(f"⏭ Skipped updates: {skipped_count}")
 print(f"📦 Feed products: {feed_count}")
 print(f"⚠ Skipped in feed: {skipped_feed}")
