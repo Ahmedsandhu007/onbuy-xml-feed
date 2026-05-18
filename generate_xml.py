@@ -15,13 +15,13 @@ import csv
 EBAY_CLIENT_ID = os.getenv("EBAY_CLIENT_ID")
 EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 
-# 🔥 FULL REFRESH FOR THIS RUN
-FULL_REFRESH = False
+# 🔥 FULL REFRESH FOR ALL PRODUCTS
+FULL_REFRESH = True
 
-# 🔥 PROCESS ALL PRODUCTS THIS RUN
-MAX_PRODUCTS_PER_RUN = 12
+# 🔥 AFTER FULL FETCH CHANGE TO FALSE
+MAX_PRODUCTS_PER_RUN = 999999
 
-# 🔥 KEEP FALSE NORMALLY
+# 🔥 CATEGORY REMAP
 RUN_CATEGORY_MAPPING = True
 
 PK_TZ = ZoneInfo("Asia/Karachi")
@@ -58,7 +58,7 @@ col_map = {
 
 print(f"📊 TOTAL ROWS IN SHEET: {len(data)}")
 
-# ================= ONBUY CATEGORY DATA =================
+# ================= CATEGORY DATA =================
 ONBUY_CATEGORIES = []
 
 with open(
@@ -108,19 +108,6 @@ def to_jpg(url):
 
     return url
 
-def clean_additional_images(images):
-
-    if not images:
-        return ""
-
-    imgs = [
-        to_jpg(i.strip())
-        for i in str(images).split(",")
-        if i.strip()
-    ]
-
-    return ",".join(imgs[:5])
-
 def clean_category(cat):
 
     if not cat:
@@ -161,13 +148,6 @@ def tokenize(text):
         )
     )
 
-def is_valid_onbuy_category(category):
-
-    return (
-        str(category).strip().lower()
-        in VALID_ONBUY_CATEGORIES
-    )
-
 def parse_time(value):
 
     try:
@@ -178,6 +158,13 @@ def parse_time(value):
 
     except:
         return datetime(2000, 1, 1)
+
+def is_valid_onbuy_category(category):
+
+    return (
+        str(category).strip().lower()
+        in VALID_ONBUY_CATEGORIES
+    )
 
 # ================= CATEGORY MATCHER =================
 def map_onbuy_category(
@@ -224,7 +211,7 @@ def map_onbuy_category(
 
     return current_category
 
-# ================= EBAY =================
+# ================= EBAY TOKEN =================
 def get_ebay_token():
 
     encoded = base64.b64encode(
@@ -247,6 +234,7 @@ def get_ebay_token():
         "access_token"
     )
 
+# ================= EBAY FETCH =================
 def get_ebay_data(url, token):
 
     try:
@@ -257,11 +245,10 @@ def get_ebay_data(url, token):
         )
 
         if not match:
-            return None, None
+            return None
 
         item_id = match.group(1)
 
-        # ✅ CORRECT LEGACY ENDPOINT
         res = requests.get(
             "https://api.ebay.com/buy/browse/v1/item/get_item_by_legacy_id",
             headers={
@@ -273,158 +260,221 @@ def get_ebay_data(url, token):
             }
         )
 
-        # 🚨 TRUE REMOVED LISTING
         if res.status_code == 404:
 
             print(f"REMOVED LISTING: {item_id}")
 
-            return 0, 0
+            return {
+                "stock": 0,
+                "price": 0
+            }
 
         data = res.json()
 
-        estimated = data.get(
-            "estimatedAvailabilities",
-            []
-        )
-
-        availability_status = ""
-
-        stock = None
-
-        if estimated:
-
-            availability_status = estimated[0].get(
-                "estimatedAvailabilityStatus",
-                ""
-            )
-
-            # 🚨 TRUE OUT OF STOCK
-            if availability_status in [
-                "OUT_OF_STOCK",
-                "UNAVAILABLE"
-            ]:
-
-                print(f"OUT OF STOCK: {item_id}")
-
-                return 0, 0
-
-            stock = estimated[0].get(
-                "estimatedAvailableQuantity"
-            )
-
+        # ================= PRICE =================
         price_data = data.get(
             "price",
             {}
         )
 
-        price = None
+        price = float(
+            price_data.get(
+                "value",
+                0
+            ) or 0
+        )
 
-        if price_data:
+        if price <= 0:
+            return None
 
-            try:
-                price = float(
-                    price_data.get(
-                        "value",
-                        0
-                    )
-                )
+        # ================= STOCK =================
+        estimated = data.get(
+            "estimatedAvailabilities",
+            []
+        )
 
-            except:
-                price = None
+        stock = 5
 
-        # 🚨 PARTIAL API RESPONSE
-        if price is None:
+        if estimated:
 
-            print(
-                f"PARTIAL API DATA: {item_id}"
+            status = estimated[0].get(
+                "estimatedAvailabilityStatus",
+                ""
             )
 
-            return None, None
+            if status in [
+                "OUT_OF_STOCK",
+                "UNAVAILABLE"
+            ]:
 
-        # FALLBACK STOCK
+                return {
+                    "stock": 0,
+                    "price": 0
+                }
+
+            stock = estimated[0].get(
+                "estimatedAvailableQuantity",
+                5
+            )
+
         if not stock or stock <= 0:
             stock = 5
 
-        return stock, price
+        # ================= DESCRIPTION =================
+        html_description = data.get(
+            "description",
+            ""
+        )
+
+        # ================= MAIN IMAGE =================
+        main_image = ""
+
+        if data.get("image"):
+
+            main_image = to_jpg(
+                data["image"].get(
+                    "imageUrl",
+                    ""
+                )
+            )
+
+        # ================= ADDITIONAL IMAGES =================
+        additional_images = []
+
+        for img in data.get(
+            "additionalImages",
+            []
+        ):
+
+            img_url = to_jpg(
+                img.get(
+                    "imageUrl",
+                    ""
+                )
+            )
+
+            if img_url:
+                additional_images.append(
+                    img_url
+                )
+
+        additional_images = ",".join(
+            additional_images[:10]
+        )
+
+        # ================= TITLE =================
+        title = data.get(
+            "title",
+            ""
+        )
+
+        # ================= BRAND =================
+        brand = ""
+
+        aspects = data.get(
+            "localizedAspects",
+            []
+        )
+
+        for aspect in aspects:
+
+            if aspect.get(
+                "name",
+                ""
+            ).lower() == "brand":
+
+                values = aspect.get(
+                    "value",
+                    ""
+                )
+
+                if isinstance(values, list):
+
+                    brand = values[0]
+
+                else:
+
+                    brand = values
+
+        return {
+            "stock": stock,
+            "price": price,
+            "description": html_description,
+            "main_image": main_image,
+            "additional_images": additional_images,
+            "title": title,
+            "brand": brand
+        }
 
     except Exception as e:
 
         print(f"eBay fetch error: {e}")
 
-        return None, None
+        return None
 
-# ================= CATEGORY AUTO-MAPPING =================
+# ================= CATEGORY MAPPING =================
 if RUN_CATEGORY_MAPPING:
 
-    print("\n🔄 Updating OnBuy Categories...")
+    print("\n🔄 Updating Categories...")
 
-    category_updates = 0
-
-    bulk_category_updates = []
+    category_updates = []
 
     for idx, row in enumerate(data):
 
         i = idx + 2
 
-        title = str(
-            row.get("Title") or ""
-        )
-
         current_category = str(
             row.get("Category") or ""
         ).strip()
 
-        description = str(
-            row.get("Description") or ""
-        )
-
-        if is_valid_onbuy_category(current_category):
+        if is_valid_onbuy_category(
+            current_category
+        ):
             continue
 
-        mapped_category = map_onbuy_category(
-            title,
+        mapped = map_onbuy_category(
+            row.get("Title"),
             current_category,
-            description
+            row.get("Description")
         )
 
-        if mapped_category != current_category:
+        if mapped != current_category:
 
-            bulk_category_updates.append({
+            category_updates.append({
                 "range": f"{col_letter(col_map['Category'])}{i}",
-                "values": [[mapped_category]]
+                "values": [[mapped]]
             })
 
-            category_updates += 1
+            print(f"Mapped row {i}")
 
-            print(
-                f"Prepared category row {i}"
+    if category_updates:
+        sheet.batch_update(category_updates)
+
+# ================= PRODUCT ORDER =================
+if FULL_REFRESH:
+
+    sorted_data = list(
+        enumerate(data)
+    )
+
+else:
+
+    sorted_data = sorted(
+        enumerate(data),
+        key=lambda x: parse_time(
+            x[1].get(
+                "Last Checked Time",
+                ""
             )
-
-    if bulk_category_updates:
-
-        sheet.batch_update(
-            bulk_category_updates
         )
-
-    print(
-        f"\n✅ Categories Updated: "
-        f"{category_updates}"
     )
-
-# ================= SMART PRIORITY SYNC =================
-sorted_data = sorted(
-    enumerate(data),
-    key=lambda x: parse_time(
-        x[1].get("Last Checked Time", "")
-    )
-)
 
 print(
-    f"🔁 Smart Sync | "
-    f"Processing {len(sorted_data[:MAX_PRODUCTS_PER_RUN])} products"
+    f"🔁 Processing "
+    f"{min(len(sorted_data), MAX_PRODUCTS_PER_RUN)} products"
 )
 
-# ================= UPDATE LOOP =================
+# ================= MAIN LOOP =================
 token = get_ebay_token()
 
 updated_count = 0
@@ -436,18 +486,17 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
 
     url = str(
         row.get("Supplier URL", "")
-    ).lower()
+    ).strip()
 
-    if "ebay." not in url:
+    if "ebay." not in url.lower():
         continue
 
-    stock, cost_price = get_ebay_data(
+    ebay_data = get_ebay_data(
         url,
         token
     )
 
-    # 🚨 PARTIAL API RESPONSE
-    if stock is None or cost_price is None:
+    if not ebay_data:
 
         skipped_count += 1
 
@@ -455,6 +504,10 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
 
         continue
 
+    stock = ebay_data["stock"]
+    cost_price = ebay_data["price"]
+
+    # ================= PRICING =================
     if stock == 0:
 
         final_price = 0
@@ -462,6 +515,7 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
     else:
 
         minimum_price = cost_price * 1.15
+
         calculated_price = cost_price * 1.4
 
         final_price = round(
@@ -473,18 +527,22 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
         )
 
     updates = [
+
         {
             "range": f"{col_letter(col_map['Cost Price (£)'])}{i}",
             "values": [[float(cost_price or 0)]]
         },
+
         {
             "range": f"{col_letter(col_map['Stock'])}{i}",
             "values": [[int(stock or 0)]]
         },
+
         {
             "range": f"{col_letter(col_map['Selling Price (£)'])}{i}",
             "values": [[float(final_price)]]
         },
+
         {
             "range": f"{col_letter(col_map['Status'])}{i}",
             "values": [[
@@ -493,6 +551,42 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
                 else "INACTIVE"
             ]]
         },
+
+        {
+            "range": f"{col_letter(col_map['Description'])}{i}",
+            "values": [[
+                ebay_data["description"]
+            ]]
+        },
+
+        {
+            "range": f"{col_letter(col_map['Image URL'])}{i}",
+            "values": [[
+                ebay_data["main_image"]
+            ]]
+        },
+
+        {
+            "range": f"{col_letter(col_map['Additional Images'])}{i}",
+            "values": [[
+                ebay_data["additional_images"]
+            ]]
+        },
+
+        {
+            "range": f"{col_letter(col_map['Brand'])}{i}",
+            "values": [[
+                ebay_data["brand"]
+            ]]
+        },
+
+        {
+            "range": f"{col_letter(col_map['Title'])}{i}",
+            "values": [[
+                ebay_data["title"]
+            ]]
+        },
+
         {
             "range": f"{col_letter(col_map['Last Updated'])}{i}",
             "values": [[
@@ -501,6 +595,7 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
                 )
             ]]
         },
+
         {
             "range": f"{col_letter(col_map['Last Checked Time'])}{i}",
             "values": [[
@@ -525,7 +620,9 @@ root = ET.Element("products")
 count = 0
 skipped_xml = 0
 
-for idx, row in enumerate(data):
+for idx, row in enumerate(
+    sheet.get_all_records()
+):
 
     try:
 
@@ -555,6 +652,11 @@ for idx, row in enumerate(data):
         category = clean_category(
             row.get("Category")
         )
+
+        add_imgs = str(
+            row.get("Additional Images")
+            or ""
+        ).strip()
 
         price = float(
             re.sub(
@@ -591,27 +693,77 @@ for idx, row in enumerate(data):
             "product"
         )
 
-        ET.SubElement(p, "sku").text = sku
-        ET.SubElement(p, "product_name").text = title[:150]
-        ET.SubElement(p, "description").text = desc
-        ET.SubElement(p, "image_url").text = image
+        ET.SubElement(
+            p,
+            "sku"
+        ).text = sku
 
-        add_imgs = clean_additional_images(
-            row.get("Additional Images")
+        ET.SubElement(
+            p,
+            "product_name"
+        ).text = title[:150]
+
+        description_element = ET.SubElement(
+            p,
+            "description"
         )
 
+        description_element.text = desc
+
+        ET.SubElement(
+            p,
+            "image_url"
+        ).text = image
+
+        # ================= ADDITIONAL IMAGES =================
+        additional_images_list = []
+
         if add_imgs:
+
+            additional_images_list = [
+                img.strip()
+                for img in add_imgs.split(",")
+                if img.strip()
+            ]
+
+        for idx2, img in enumerate(
+            additional_images_list[:10]
+        ):
+
             ET.SubElement(
                 p,
-                "additional_image_urls"
-            ).text = add_imgs
+                f"additional_image_url_{idx2 + 1}"
+            ).text = img
 
-        ET.SubElement(p, "brand").text = brand
-        ET.SubElement(p, "category").text = category
-        ET.SubElement(p, "ean").text = sku
-        ET.SubElement(p, "condition").text = "New"
-        ET.SubElement(p, "price").text = str(price)
-        ET.SubElement(p, "quantity").text = str(stock)
+        ET.SubElement(
+            p,
+            "brand"
+        ).text = brand
+
+        ET.SubElement(
+            p,
+            "category"
+        ).text = category
+
+        ET.SubElement(
+            p,
+            "ean"
+        ).text = sku
+
+        ET.SubElement(
+            p,
+            "condition"
+        ).text = "New"
+
+        ET.SubElement(
+            p,
+            "price"
+        ).text = str(price)
+
+        ET.SubElement(
+            p,
+            "quantity"
+        ).text = str(stock)
 
         count += 1
 
@@ -626,7 +778,22 @@ ET.ElementTree(root).write(
 
 print("\n✅ DONE")
 
-print(f"📦 Updated rows: {updated_count}")
-print(f"⏭ Skipped updates: {skipped_count}")
-print(f"📦 Feed products: {count}")
-print(f"⚠ Skipped in feed: {skipped_xml}")
+print(
+    f"📦 Updated rows: "
+    f"{updated_count}"
+)
+
+print(
+    f"⏭ Skipped updates: "
+    f"{skipped_count}"
+)
+
+print(
+    f"📦 Feed products: "
+    f"{count}"
+)
+
+print(
+    f"⚠ Skipped in feed: "
+    f"{skipped_xml}"
+)
