@@ -15,14 +15,22 @@ import csv
 EBAY_CLIENT_ID = os.getenv("EBAY_CLIENT_ID")
 EBAY_CLIENT_SECRET = os.getenv("EBAY_CLIENT_SECRET")
 
-# 🔥 FULL REFRESH FOR ALL PRODUCTS
+# ================= SETTINGS =================
+
+# TRUE = FETCH ALL PRODUCTS
+# FALSE = SMART BATCHING
 FULL_REFRESH = True
 
-# 🔥 AFTER FULL FETCH CHANGE TO FALSE
+# AFTER FIRST FULL FETCH
+# CHANGE TO 12 OR 20
 MAX_PRODUCTS_PER_RUN = 999999
 
-# 🔥 CATEGORY REMAP
+# CATEGORY REMAP
 RUN_CATEGORY_MAPPING = True
+
+# PRICING
+MIN_PROFIT_PERCENT = 15
+DEFAULT_MARKUP_PERCENT = 40
 
 PK_TZ = ZoneInfo("Asia/Karachi")
 
@@ -58,7 +66,7 @@ col_map = {
 
 print(f"📊 TOTAL ROWS IN SHEET: {len(data)}")
 
-# ================= CATEGORY DATA =================
+# ================= CATEGORY FILE =================
 ONBUY_CATEGORIES = []
 
 with open(
@@ -89,6 +97,61 @@ VALID_ONBUY_CATEGORIES = set(
 )
 
 # ================= HELPERS =================
+def col_letter(n):
+
+    result = ""
+
+    while n:
+        n, r = divmod(n - 1, 26)
+        result = chr(65 + r) + result
+
+    return result
+
+def parse_time(value):
+
+    try:
+        return datetime.strptime(
+            value,
+            "%Y-%m-%d %H:%M:%S"
+        )
+
+    except:
+        return datetime(2000, 1, 1)
+
+def tokenize(text):
+
+    return set(
+        re.findall(
+            r'\w+',
+            str(text).lower()
+        )
+    )
+
+def clean_category(cat):
+
+    if not cat:
+        return ""
+
+    cat = str(cat).replace(
+        "\n",
+        " "
+    ).strip()
+
+    cat = re.sub(
+        r"\s+",
+        " ",
+        cat
+    ).strip()
+
+    return cat
+
+def is_valid_onbuy_category(category):
+
+    return (
+        str(category).strip().lower()
+        in VALID_ONBUY_CATEGORIES
+    )
+
 def to_jpg(url):
 
     if not url:
@@ -108,65 +171,40 @@ def to_jpg(url):
 
     return url
 
-def clean_category(cat):
+def clean_images(images):
 
-    if not cat:
+    if not images:
         return ""
 
-    cat = str(cat).replace(
-        "\n",
-        " "
-    ).strip()
+    imgs = [
+        to_jpg(i.strip())
+        for i in str(images).split(",")
+        if i.strip()
+    ]
 
-    if "|" in cat:
-        cat = cat.split("|")[-1]
+    return ",".join(imgs[:10])
 
-    cat = re.sub(
+# ================= HTML SAFE LIMIT =================
+def trim_html_description(desc, limit=45000):
+
+    if not desc:
+        return ""
+
+    desc = str(desc)
+
+    desc = re.sub(
         r"\s+",
         " ",
-        cat
-    ).strip()
-
-    return cat
-
-def col_letter(n):
-
-    result = ""
-
-    while n:
-        n, r = divmod(n - 1, 26)
-        result = chr(65 + r) + result
-
-    return result
-
-def tokenize(text):
-
-    return set(
-        re.findall(
-            r'\w+',
-            str(text).lower()
-        )
+        desc
     )
 
-def parse_time(value):
+    if len(desc) > limit:
 
-    try:
-        return datetime.strptime(
-            value,
-            "%Y-%m-%d %H:%M:%S"
-        )
+        desc = desc[:limit]
 
-    except:
-        return datetime(2000, 1, 1)
+    return desc
 
-def is_valid_onbuy_category(category):
-
-    return (
-        str(category).strip().lower()
-        in VALID_ONBUY_CATEGORIES
-    )
-
-# ================= CATEGORY MATCHER =================
+# ================= CATEGORY MAPPING =================
 def map_onbuy_category(
     title,
     current_category,
@@ -321,9 +359,11 @@ def get_ebay_data(url, token):
             stock = 5
 
         # ================= DESCRIPTION =================
-        html_description = data.get(
-            "description",
-            ""
+        html_description = trim_html_description(
+            data.get(
+                "description",
+                ""
+            )
         )
 
         # ================= MAIN IMAGE =================
@@ -474,7 +514,7 @@ print(
     f"{min(len(sorted_data), MAX_PRODUCTS_PER_RUN)} products"
 )
 
-# ================= MAIN LOOP =================
+# ================= MAIN UPDATE LOOP =================
 token = get_ebay_token()
 
 updated_count = 0
@@ -510,15 +550,19 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
     # ================= PRICING =================
     if stock == 0:
 
-        final_price = 0
+        selling_price = 0
 
     else:
 
-        minimum_price = cost_price * 1.15
+        minimum_price = cost_price * (
+            1 + (MIN_PROFIT_PERCENT / 100)
+        )
 
-        calculated_price = cost_price * 1.4
+        calculated_price = cost_price * (
+            1 + (DEFAULT_MARKUP_PERCENT / 100)
+        )
 
-        final_price = round(
+        selling_price = round(
             max(
                 minimum_price,
                 calculated_price
@@ -527,22 +571,18 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
         )
 
     updates = [
-
         {
             "range": f"{col_letter(col_map['Cost Price (£)'])}{i}",
-            "values": [[float(cost_price or 0)]]
+            "values": [[cost_price]]
         },
-
         {
             "range": f"{col_letter(col_map['Stock'])}{i}",
-            "values": [[int(stock or 0)]]
+            "values": [[stock]]
         },
-
         {
             "range": f"{col_letter(col_map['Selling Price (£)'])}{i}",
-            "values": [[float(final_price)]]
+            "values": [[selling_price]]
         },
-
         {
             "range": f"{col_letter(col_map['Status'])}{i}",
             "values": [[
@@ -551,42 +591,38 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
                 else "INACTIVE"
             ]]
         },
-
         {
             "range": f"{col_letter(col_map['Description'])}{i}",
             "values": [[
-                ebay_data["description"]
+                trim_html_description(
+                    ebay_data["description"]
+                )
             ]]
         },
-
         {
             "range": f"{col_letter(col_map['Image URL'])}{i}",
             "values": [[
                 ebay_data["main_image"]
             ]]
         },
-
         {
             "range": f"{col_letter(col_map['Additional Images'])}{i}",
             "values": [[
                 ebay_data["additional_images"]
             ]]
         },
-
         {
             "range": f"{col_letter(col_map['Brand'])}{i}",
             "values": [[
                 ebay_data["brand"]
             ]]
         },
-
         {
             "range": f"{col_letter(col_map['Title'])}{i}",
             "values": [[
                 ebay_data["title"]
             ]]
         },
-
         {
             "range": f"{col_letter(col_map['Last Updated'])}{i}",
             "values": [[
@@ -595,7 +631,6 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
                 )
             ]]
         },
-
         {
             "range": f"{col_letter(col_map['Last Checked Time'])}{i}",
             "values": [[
@@ -614,15 +649,13 @@ for idx, row in sorted_data[:MAX_PRODUCTS_PER_RUN]:
 
     time.sleep(0.5)
 
-# ================= XML =================
+# ================= GENERATE XML =================
 root = ET.Element("products")
 
-count = 0
-skipped_xml = 0
+feed_count = 0
+skipped_feed = 0
 
-for idx, row in enumerate(
-    sheet.get_all_records()
-):
+for row in sheet.get_all_records():
 
     try:
 
@@ -638,13 +671,6 @@ for idx, row in enumerate(
             row.get("Description") or ""
         ).strip()
 
-        image = to_jpg(
-            str(
-                row.get("Image URL")
-                or ""
-            )
-        )
-
         brand = str(
             row.get("Brand") or ""
         ).strip()
@@ -653,147 +679,126 @@ for idx, row in enumerate(
             row.get("Category")
         )
 
-        add_imgs = str(
+        image = to_jpg(
+            row.get("Image URL")
+        )
+
+        additional_images = clean_images(
             row.get("Additional Images")
-            or ""
-        ).strip()
+        )
 
         price = float(
-            re.sub(
-                r"[^\d.]",
-                "",
-                str(
-                    row.get(
-                        "Selling Price (£)"
-                    ) or "0"
-                )
-            ) or 0
+            row.get("Selling Price (£)") or 0
         )
 
         stock = int(
             row.get("Stock") or 0
         )
 
-        if (
-            not all([
-                sku,
-                title,
-                desc,
-                image,
-                brand,
-                category
-            ])
-        ):
+        if not all([
+            sku,
+            title,
+            desc,
+            image,
+            category
+        ]):
 
-            skipped_xml += 1
+            skipped_feed += 1
             continue
 
-        p = ET.SubElement(
+        product = ET.SubElement(
             root,
             "product"
         )
 
         ET.SubElement(
-            p,
+            product,
             "sku"
         ).text = sku
 
         ET.SubElement(
-            p,
+            product,
             "product_name"
         ).text = title[:150]
 
         description_element = ET.SubElement(
-            p,
+            product,
             "description"
         )
 
         description_element.text = desc
 
         ET.SubElement(
-            p,
+            product,
             "image_url"
         ).text = image
 
         # ================= ADDITIONAL IMAGES =================
         additional_images_list = []
 
-        if add_imgs:
+        if additional_images:
 
             additional_images_list = [
                 img.strip()
-                for img in add_imgs.split(",")
+                for img in additional_images.split(",")
                 if img.strip()
             ]
 
-        for idx2, img in enumerate(
+        for idx, img in enumerate(
             additional_images_list[:10]
         ):
 
             ET.SubElement(
-                p,
-                f"additional_image_url_{idx2 + 1}"
+                product,
+                f"additional_image_url_{idx + 1}"
             ).text = img
 
         ET.SubElement(
-            p,
+            product,
             "brand"
         ).text = brand
 
         ET.SubElement(
-            p,
+            product,
             "category"
         ).text = category
 
         ET.SubElement(
-            p,
-            "ean"
-        ).text = sku
-
-        ET.SubElement(
-            p,
+            product,
             "condition"
         ).text = "New"
 
         ET.SubElement(
-            p,
+            product,
+            "ean"
+        ).text = sku
+
+        ET.SubElement(
+            product,
             "price"
         ).text = str(price)
 
         ET.SubElement(
-            p,
+            product,
             "quantity"
         ).text = str(stock)
 
-        count += 1
+        feed_count += 1
 
     except:
-        skipped_xml += 1
 
+        skipped_feed += 1
+
+# ================= SAVE XML =================
 ET.ElementTree(root).write(
     "feed.xml",
     encoding="utf-8",
     xml_declaration=True
 )
 
+# ================= FINAL LOGS =================
 print("\n✅ DONE")
-
-print(
-    f"📦 Updated rows: "
-    f"{updated_count}"
-)
-
-print(
-    f"⏭ Skipped updates: "
-    f"{skipped_count}"
-)
-
-print(
-    f"📦 Feed products: "
-    f"{count}"
-)
-
-print(
-    f"⚠ Skipped in feed: "
-    f"{skipped_xml}"
-)
+print(f"📦 Updated rows: {updated_count}")
+print(f"⏭ Skipped updates: {skipped_count}")
+print(f"📦 Feed products: {feed_count}")
+print(f"⚠ Skipped in feed: {skipped_feed}")
